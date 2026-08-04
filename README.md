@@ -1,0 +1,166 @@
+# Blackstone Carried Interest — Multi-Agent Review Pipeline
+
+A learning project exploring multi-agent LLM systems through a real accounting
+use case: reviewing how Blackstone discloses its carried interest terms in
+public SEC filings, plus a separate deterministic calculator estimating
+per-fund carry economics from public performance data.
+
+**This was built to learn multi-agent architecture and testing discipline —
+not as a production tool.** See "What this is / isn't" below before using
+any of it for real analysis.
+
+---
+
+## Why this exists
+
+Most multi-agent demos show a pipeline that works once, on camera. The
+actual point of this project was different: build something, write down
+what "correct" means *before* judging any output, then find out — by
+testing repeatedly — whether it's actually reliable or just looked good
+once.
+
+That process surfaced two real bugs a single successful run would never
+have caught. Both are documented below with what they were and how they
+were found.
+
+---
+
+## Architecture
+
+### Branch 1 — Disclosure Review Pipeline (6 agents)
+
+A chain-of-custody design: each agent hands off to the next with
+deliberately restricted context, so the pipeline can be tested for
+*information loss*, not just correctness.
+
+1. **Retriever** — `web_search`, restricted to sec.gov / blackstone.com only.
+   Required to date every source and prefer the most recent filing.
+2. **Mechanics Explainer** — reads the raw retrieved text, explains hurdle /
+   catch-up / GP-LP split / crystallization terms. Instructed to explicitly
+   flag anything the source doesn't cover, rather than filling gaps with
+   plausible-sounding industry defaults.
+3. **Neutral Summarizer** — compresses the Mechanics output to 3-5 sentences.
+   **Deliberately never sees the raw source** — only the prior agent's
+   output — so the pipeline can be tested for what a blind compression step
+   loses.
+4. **Disclosure Skeptic** — reviews *only* the Summarizer's compressed
+   output (not the raw filing, not the full Mechanics explanation). Plays
+   a second-reviewer role, hunting for unsubstantiated claims and ambiguity.
+5. **Synthesis** — combines the summary and the Skeptic's concerns into a
+   final reviewer memo.
+6. **Judge** — grades the final memo against the *original raw source*
+   (not against any intermediate agent output) on completeness, accuracy,
+   and skeptic value-add, each 0-10 with cited justification.
+
+The Retriever is the only stage that calls a live tool (`web_search`) and
+gets a longer timeout (90s vs. 45s) and retry-with-backoff for that reason.
+
+### Branch 2 — Carry-for-Dummies Calculator
+
+Deliberately **not** an LLM doing math. A real, testable JS function
+(`computeCarry`) does the actual waterfall calculation — paid-in capital,
+compounded hurdle, GP catch-up, 80/20 split. An LLM call only narrates the
+*already-computed* numbers in plain language afterward, explicitly
+instructed not to recompute anything.
+
+This split exists on purpose: LLM arithmetic can be subtly wrong in ways
+that are invisible from the output alone, while a bug in real code is
+traceable and fixable. See "Bug #1" below for what that distinction caught.
+
+---
+
+## What this is / isn't
+
+**Is:** a working demonstration of building and testing a multi-agent
+system, using real public data (Blackstone SEC filings + a Blackstone fund
+performance reference table).
+
+**Isn't:** a standalone deployable app. The `carry-review.jsx` file makes
+`fetch()` calls to `https://api.anthropic.com/v1/messages` with **no API
+key anywhere in the code** — that only works inside Claude's artifact
+sandbox, which proxies and authenticates the request invisibly. Clone this
+and run it as a normal web app and every button will silently fail.
+
+To actually deploy this, you would need, at minimum:
+- A real backend holding the API key server-side (never expose it to the
+  browser — anyone could read it from dev tools)
+- Real hosting for that backend + frontend
+- If used on real client/engagement data: firm AI-governance and InfoSec
+  sign-off before it touches anything non-public
+
+**Isn't:** validated against Blackstone's actual current LPA terms. The
+calculator's 8% hurdle / 100% catch-up / 20% carry are stated, labeled
+assumptions — the pipeline's own Retriever found real disclosed ranges
+(5-10% hurdle depending on filing year and vehicle type) that don't match
+that flat assumption. This is intentional: Branch 2 is a teaching tool for
+how carry math works, not a real economics estimate for any specific fund.
+
+---
+
+## Bugs found through testing (not through a single successful run)
+
+### Bug #1 — Hurdle compounding to "today" instead of to realization
+
+The calculator initially compounded the 8% hurdle from a fund's deployment
+date all the way to the current report date, for every fund — including
+funds that were **fully realized years or decades ago**. Result: BCP IV, a
+2.9x MOIC / 36% IRR fund (one of the strongest in the dataset), came out to
+**0% carry**, because a 23-year uninterrupted compound produced a hurdle
+larger than the fund's actual profit.
+
+Fix: capped years-elapsed at 12 (a typical full closed-end fund lifecycle),
+so mature/realized funds stop accruing hurdle once they're actually done.
+
+This was only caught by writing `evals/eval_set.md` **before** building the
+calculator, then running the implementation against it — a one-off manual
+spot check on a different fund had already missed it.
+
+### Bug #2 — Long-duration funds still under-modeled after the fix
+
+Even after the 12-year cap, one eval case still failed: BCP I-III, deployed
+1987-2002 (15-year investment period), 19% net IRR, still computed 0%
+carry. Root cause: the model treats all paid-in capital as a lump sum at
+the fund's midpoint, which doesn't reflect how capital is actually called
+and returned gradually over a long fund life — a real structural limitation
+given the data available (no capital-call timing in the public reference
+table), not a fixable bug.
+
+Resolution: rather than force a fix the data can't support, the calculator
+now cross-checks its own output against the fund's *disclosed* net IRR. If
+the IRR clearly clears the hurdle but the computed carry is ~0%, it
+surfaces an explicit warning that the model likely understates carry for
+that fund, instead of silently returning a confident wrong number.
+
+### Pipeline-level findings (Branch 1, across 3 full runs)
+
+- Run 1: Retriever mislabeled a 10-Q as a 10-K (source content was real,
+  citation type was wrong). Did not recur in runs 2 or 3.
+- Run 1: Summarizer blended two distinct vehicle-specific figures into a
+  vague range ("10-20% depending on structure") that didn't match either
+  source number precisely. Did not recur in runs 2 or 3.
+- Both were one-off model variance, not reliable patterns — but both
+  prompts were hardened afterward anyway (see system prompts in code) since
+  the fix cost was low relative to the risk of silent recurrence.
+
+---
+
+## Files
+
+- `carry-review.jsx` — the full artifact (both branches, tabbed UI)
+- `evals/eval_set.md` — the carry-calculator answer key, written *before*
+  the calculator was implemented
+- `evals/branch1_eval_criteria.md` — pass/fail behavioral criteria for
+  each of the 6 pipeline agents, written before re-testing any of them
+
+---
+
+## Lessons that transfer beyond this project
+
+1. Write down what "correct" looks like before you build the thing that's
+   supposed to produce it — otherwise the implementation grades itself.
+2. Never let an LLM do arithmetic that a few lines of real code can do
+   deterministically and verifiably instead.
+3. A single successful run tells you almost nothing. Repeat runs are what
+   separate a real bug from ordinary model variance.
+4. When a system can't solve a problem with the data it has, the right
+   fix is often an honest flag, not a forced number.
