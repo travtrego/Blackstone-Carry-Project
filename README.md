@@ -126,10 +126,35 @@ given the data available (no capital-call timing in the public reference
 table), not a fixable bug.
 
 Resolution: rather than force a fix the data can't support, the calculator
-now cross-checks its own output against the fund's *disclosed* net IRR. If
-the IRR clearly clears the hurdle but the computed carry is ~0%, it
-surfaces an explicit warning that the model likely understates carry for
-that fund, instead of silently returning a confident wrong number.
+cross-checks its own output against the fund's *disclosed* net IRR. If the
+IRR clearly clears the hurdle but the computed carry is ~0%, it surfaces an
+explicit warning that the model understates carry for that fund, and the
+headline "effective carry" figure reads `n/m` instead of a confident `0.0%`.
+The full waterfall stays visible above it, so the calculation trail is still
+inspectable — only the takeaway number is withheld.
+
+Two details worth stating, because both were judgment calls:
+
+- The "clearly clears the hurdle" test is a hand-set `clearsHurdle` flag on
+  each fund, not a parse of the IRR string at runtime. The IRR values are
+  human-written labels (`"24% (early)"`, `"not meaningful"`, `"early
+  history"`), and code that digs numbers out of those fails *silently* on the
+  next odd format — precisely the class of bug this project exists to catch.
+- The threshold is 12%, not 8%. IRR and hurdle-on-paid-in aren't computed the
+  same way, so a fund at 8-9% is genuinely too close to call — eval case 3
+  expects BCP V at 8% IRR to show ~zero carry, and it correctly does. Funds
+  whose IRR the source marks early or not meaningful are excluded too: an
+  unrealized early-life IRR is not evidence a hurdle was cleared.
+
+This affects five funds, not just BCP I-III: also Strategic Partners VII
+(15%), Strategic Partners VI (13%), BCP VI (12%), and Energy I (12%).
+
+Note what this does and doesn't do. The computed number is still 0.00 — it
+cannot be corrected without capital-call timing that isn't public. Eval case
+6 asked that carry "not collapse to zero"; strictly read, the arithmetic
+still collapses. What changed is that the tool no longer *presents* that zero
+as an answer. The case is satisfied by disclosure, not by a better estimate,
+and that distinction is the whole point of the fix.
 
 ### Pipeline-level findings (Branch 1, across 3 full runs)
 
