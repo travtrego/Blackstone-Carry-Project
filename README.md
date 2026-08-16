@@ -173,9 +173,10 @@ and that distinction is the whole point of the fix.
 
 - `carry-review.jsx` — the full artifact (both branches, tabbed UI)
 - `evals/eval_set.md` — the carry-calculator answer key, written *before*
-  the calculator was implemented
+  the calculator was implemented, with the results appended afterward
 - `evals/branch1_eval_criteria.md` — pass/fail behavioral criteria for
   each of the 6 pipeline agents, written before re-testing any of them
+- `LICENSE` — MIT
 
 ---
 
