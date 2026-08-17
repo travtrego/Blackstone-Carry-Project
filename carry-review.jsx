@@ -180,11 +180,35 @@ function downloadCSV() {
 }
 
 // ---------- API ----------
-function withTimeout(promise, ms, label) {
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms)),
-  ]);
+// Races a request against a timer and actually cancels it when the timer wins.
+//
+// The previous version took an already-started fetch and raced it with
+// Promise.race. That surfaces a timeout to the caller, but nothing ever cancels
+// the request — it runs to completion in the background regardless. Paired with
+// the retry loop, one slow retriever stage could leave three overlapping
+// requests in flight against the same endpoint. It also never cleared its timer,
+// so even a fast response left a pending callback alive for the full 45 or 90
+// seconds.
+//
+// Owning the fetch here is what makes cancellation possible at all: the signal
+// has to be passed to fetch at call time, so a timeout can't be bolted on to a
+// promise after the fact.
+async function fetchWithTimeout(url, options, ms, label) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (e) {
+    // Check the signal rather than the error type. An aborted fetch rejects
+    // with a generic AbortError that reads like a network fault, which would be
+    // misleading in the UI — this is our own deadline, and should say so.
+    if (controller.signal.aborted) {
+      throw new Error(`${label} timed out after ${ms / 1000}s`);
+    }
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function sleep(ms) {
@@ -214,10 +238,11 @@ function isRetryable(e) {
 async function callClaudeOnce({ system, prompt, tools }) {
   const body = { model: "claude-sonnet-4-6", max_tokens: 1500, system, messages: [{ role: "user", content: prompt }] };
   if (tools) body.tools = tools;
-  const res = await withTimeout(
-    fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout(
+    "https://api.anthropic.com/v1/messages",
+    {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    }),
+    },
     tools ? 90000 : 45000,
     "API call"
   );
