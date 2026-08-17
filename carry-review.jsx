@@ -225,18 +225,48 @@ class ApiError extends Error {
   }
 }
 
+// Thrown when the model ran out of output budget mid-response. Marked
+// permanently non-retryable on purpose: an identical request truncates at an
+// identical place, so retrying burns three calls to produce the same cut-off
+// text and then reports a misleading "failed after 3 attempts".
+class TruncationError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "TruncationError";
+    this.retryable = false;
+  }
+}
+
 // 408 and 429 are the only 4xx codes worth retrying (request timeout, rate
 // limit). Anything else in the 4xx range is a malformed request that will fail
 // identically on every attempt. Errors carrying no status — network failures,
 // our own timeout, an empty completion — are treated as transient.
 function isRetryable(e) {
+  if (e.retryable === false) return false;
   if (e.status == null) return true;
   if (e.status === 408 || e.status === 429) return true;
   return e.status >= 500;
 }
 
 async function callClaudeOnce({ system, prompt, tools }) {
-  const body = { model: "claude-sonnet-4-6", max_tokens: 1500, system, messages: [{ role: "user", content: prompt }] };
+  // `thinking` is set explicitly rather than omitted. On Sonnet 4.6 an absent
+  // `thinking` meant no thinking at all; on Sonnet 5 it means adaptive thinking
+  // runs. Leaving it out would have silently changed how all six stages behave
+  // as a side effect of the model swap. Disabled for now so this run stays
+  // comparable to the three already documented in the README — worth turning on
+  // for the skeptic and judge stages once there is a baseline to compare to.
+  //
+  // max_tokens covers thinking and response text together. 4000 rather than the
+  // previous 1500 because stage 1 is asked to return raw filing language, and
+  // 1500 tokens is roughly 1100 words — tight enough that truncation was
+  // plausible, and until the check below nothing would have revealed it.
+  const body = {
+    model: "claude-sonnet-5",
+    max_tokens: 4000,
+    thinking: { type: "disabled" },
+    system,
+    messages: [{ role: "user", content: prompt }],
+  };
   if (tools) body.tools = tools;
   const res = await fetchWithTimeout(
     "https://api.anthropic.com/v1/messages",
@@ -250,6 +280,18 @@ async function callClaudeOnce({ system, prompt, tools }) {
   if (!res.ok || data?.error) {
     const detail = data?.error?.message || (data?.error && JSON.stringify(data.error)) || res.statusText || "no detail";
     throw new ApiError(`API error (HTTP ${res.status}): ${detail}`, res.status);
+  }
+  // The API reports why generation stopped, and "max_tokens" means the response
+  // was cut off mid-sentence. Once the text is pulled out of the content blocks
+  // a truncated response is indistinguishable from a complete one, so without
+  // this check a cut-off answer flows silently down the chain. That matters most
+  // at stage 1: every later stage consumes the retriever's output, and the judge
+  // grades the final memo against that same raw text — so a truncation there
+  // degrades the whole pipeline *and* hides from the check meant to catch it.
+  if (data?.stop_reason === "max_tokens") {
+    throw new TruncationError(
+      `Response hit the ${body.max_tokens}-token ceiling and was cut off mid-sentence. Raise max_tokens — the partial text is not an answer.`
+    );
   }
   const text = (data.content || []).filter((b) => b.type === "text").map((b) => b.text).join("\n\n").trim();
   if (!text) {
@@ -490,7 +532,11 @@ function ReviewPipeline() {
       const retrieverText = await callClaude({
         system: "You are a retrieval agent. Your ONLY job is to find Blackstone's actual disclosed carried interest / performance revenue terms — hurdle rate, catch-up mechanics, GP/LP split, crystallization or realization triggers. Restrict yourself to sec.gov and blackstone.com results only — ignore and do not cite any other domain. PREFER THE MOST RECENT FILING AVAILABLE — actively search for current-year filings, not just whatever surfaces first. Always state the filing's date/fiscal year explicitly (e.g. 'From Blackstone's FY2024 10-K') so staleness is visible to the reader — never present disclosure language without dating it. Before citing any source, VERIFY the document type in your label matches the document type in the actual URL/filing you're citing (e.g. don't label something '10-K' if the underlying document is actually a 10-Q) — a mismatched label is worse than no label. If the most recent filing's language differs from older filings, prefer and quote the recent version. If you cannot find primary-source text at those two domains, say so plainly and return nothing else. Do not explain or interpret — return the relevant raw disclosure text, then 'SOURCE:' followed by the URL.",
         prompt: "Find Blackstone's disclosed carried interest / performance revenue terms (hurdle, catch-up, GP/LP split, crystallization).",
-        tools: [{ type: "web_search_20250305", name: "web_search" }],
+        // The _20260209 variant adds dynamic filtering: Claude filters search
+        // results before they reach the context window, which helps both the
+        // accuracy and the token cost of this stage. Requires Sonnet 5, so it
+        // is gated on the model change above.
+        tools: [{ type: "web_search_20260209", name: "web_search" }],
       });
       setStageResult("retrieve", retrieverText); setStageStatus("retrieve", "done"); setActiveKey("mechanics");
 
