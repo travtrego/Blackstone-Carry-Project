@@ -209,9 +209,22 @@ silently testing nothing.
 
 1. Write down what "correct" looks like before you build the thing that's
    supposed to produce it — otherwise the implementation grades itself.
+
+   But know the limit of that. Writing the cases first stops the
+   implementation from grading itself; it does not tell you what you forgot
+   to ask. The eval set here was written to catch old funds being
+   *understated*, and it caught exactly that. It missed the mirror image —
+   funds still inside their investment period, where the same lump-sum
+   assumption *overstates* carry on unrealized marks — because nobody thought
+   to write that case. It only surfaced later, from sweeping all 27 computable
+   funds rather than the five the cases happened to name. A written eval set
+   narrows what you check. It doesn't widen it.
+
 2. Never let an LLM do arithmetic that a few lines of real code can do
    deterministically and verifiably instead.
+
 3. A single successful run tells you almost nothing. Repeat runs are what
    separate a real bug from ordinary model variance.
+
 4. When a system can't solve a problem with the data it has, the right
    fix is often an honest flag, not a forced number.
