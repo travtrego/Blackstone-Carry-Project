@@ -174,9 +174,34 @@ and that distinction is the whole point of the fix.
 - `carry-review.jsx` — the full artifact (both branches, tabbed UI)
 - `evals/eval_set.md` — the carry-calculator answer key, written *before*
   the calculator was implemented, with the results appended afterward
+- `evals/run-evals.mjs` — the answer key as an executable check
 - `evals/branch1_eval_criteria.md` — pass/fail behavioral criteria for
   each of the 6 pipeline agents, written before re-testing any of them
 - `LICENSE` — MIT
+
+### Running the evals
+
+```
+node evals/run-evals.mjs
+```
+
+No dependencies, no build step, no `package.json` — the project doesn't have a
+toolchain and this doesn't add one. Exits non-zero on failure, so it works as a
+pre-commit hook or a CI step.
+
+It covers the seven cases from `eval_set.md` plus four structural invariants
+that came out of later work: the CSV can't go ragged, a flagged fund can't
+export a number where the UI shows `n/m`, and the hand-set `clearsHurdle` flag
+can't drift onto a fund whose IRR doesn't support it.
+
+The runner slices the pure-maths region out of `carry-review.jsx` at runtime
+rather than importing it. That's deliberate: the artifact has to stay a single
+self-contained file to run in the sandbox, so it can't be imported by node (it
+opens with a React import and contains JSX). Copying the maths into the test
+instead would create a second copy of the truth that drifts the first time
+someone edits one and not the other. If the file is reorganised so the slice
+markers move, the runner fails immediately with a message saying so, rather than
+silently testing nothing.
 
 ---
 
