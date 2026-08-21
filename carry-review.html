@@ -1,0 +1,728 @@
+<title>Blackstone Carry Docket</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+:root{
+  --void:#0F0D0A;
+  --panel:#1A1712;
+  --panel-edge:#2A2419;
+  --panel-hover:#191510;
+  --vellum:#E4DCC5;
+  --vellum-dim:#C7BE9F;
+  --brass:#8B7355;
+  --brass-dim:#5C5040;
+  --gold:#C9A227;
+  --green:#6B8F71;
+  --red:#A3423A;
+  --ink:#2A2419;
+  --ink-dim:#5A5342;
+  --ink-recv:#3E5A44;
+  --ink-hold:#8A3B33;
+  --ink-rule:#00000018;
+  --ink-wash:#00000008;
+  --display:"Fraunces","Iowan Old Style",Georgia,"Times New Roman",serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+}
+*,*::before,*::after{box-sizing:border-box}
+body{
+  margin:0;
+  background:radial-gradient(1100px 560px at 50% -12%,#1B1710 0%,rgba(27,23,16,0) 72%),var(--void);
+  background-attachment:fixed;
+  color:var(--vellum);
+  font-family:var(--sans);
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+[hidden]{display:none!important}
+:focus-visible{outline:2px solid var(--gold);outline-offset:2px;border-radius:4px}
+.shell{max-width:1080px;margin:0 auto;padding:36px 20px 80px}
+
+/* ---- masthead ---- */
+.eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--brass);margin:0}
+.title{font-family:var(--display);font-weight:500;font-size:clamp(30px,5.2vw,44px);line-height:1.08;letter-spacing:-.015em;margin:10px 0 0;color:var(--vellum);text-wrap:balance}
+.lede{max-width:64ch;margin:12px 0 0;color:var(--vellum-dim);font-size:14.5px;line-height:1.68}
+
+/* ---- folder tabs ---- */
+.tabs{display:flex;gap:4px;margin:30px 0 0;border-bottom:1px solid var(--panel-edge)}
+.tab{position:relative;top:1px;appearance:none;background:transparent;border:1px solid transparent;border-bottom:none;border-radius:9px 9px 0 0;padding:11px 16px;font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--brass);cursor:pointer}
+.tab:hover{color:var(--vellum-dim)}
+.tab[aria-selected="true"]{background:var(--panel);border-color:var(--panel-edge);color:var(--gold)}
+
+/* ---- shared dark surfaces ---- */
+.notice{display:flex;gap:13px;align-items:flex-start;background:var(--panel);border:1px solid var(--panel-edge);border-left:2px solid var(--gold);border-radius:9px;padding:15px 17px;margin:28px 0 0}
+.notice svg{flex:0 0 auto;margin-top:2px;stroke:var(--gold)}
+.notice p{margin:0;font-size:13.5px;line-height:1.62;color:var(--vellum-dim);max-width:70ch}
+.notice strong{color:var(--vellum);font-weight:600}
+
+.section-key{font-family:var(--mono);font-size:10px;letter-spacing:.2em;text-transform:uppercase;color:var(--brass);margin:34px 0 10px}
+
+/* ---- custody strip ---- */
+.strip{display:grid;grid-template-columns:repeat(6,1fr);gap:6px}
+.strip-cell{border:1px solid var(--panel-edge);background:var(--panel);border-radius:7px;padding:10px 6px;text-align:center;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--brass-dim);line-height:1.45}
+.strip-cell b{display:block;font-size:12px;font-weight:500;letter-spacing:.1em;margin-bottom:3px;color:var(--brass-dim)}
+.strip-cell.has{border-color:rgba(201,162,39,.55);background:rgba(201,162,39,.11);color:var(--gold)}
+.strip-cell.has b{color:var(--gold)}
+.strip-legend{display:flex;flex-wrap:wrap;gap:16px;margin-top:9px;font-family:var(--mono);font-size:10.5px;color:var(--brass-dim)}
+.strip-legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:8px;height:8px;border-radius:2px;border:1px solid var(--brass-dim);background:var(--panel)}
+.dot.on{border-color:rgba(201,162,39,.55);background:rgba(201,162,39,.35)}
+
+/* ---- branch grid ---- */
+.branch{display:grid;grid-template-columns:264px minmax(0,1fr);gap:26px;margin-top:20px;align-items:start}
+.branch[hidden]{display:none}
+@media (max-width:880px){.branch{grid-template-columns:minmax(0,1fr)}}
+
+/* ---- docket rail ---- */
+.rail{position:relative;display:flex;flex-direction:column}
+.rail::before{content:"";position:absolute;left:28px;top:30px;bottom:30px;width:1px;background:var(--brass-dim)}
+.stage{position:relative;display:flex;gap:12px;align-items:flex-start;width:100%;text-align:left;font:inherit;color:inherit;background:transparent;border:1px solid transparent;border-radius:9px;padding:11px 10px;cursor:pointer}
+.stage:hover{background:var(--panel-hover)}
+.stage[aria-current="true"]{background:var(--panel);border-color:var(--panel-edge)}
+.stage-dot{position:relative;z-index:1;flex:0 0 auto;width:36px;height:36px;border-radius:999px;display:grid;place-items:center;background:var(--void);border:1.5px solid var(--brass-dim)}
+.stage-dot svg{stroke:var(--brass)}
+.stage[aria-current="true"] .stage-dot{border-color:var(--gold)}
+.stage[aria-current="true"] .stage-dot svg{stroke:var(--gold)}
+.stage-main{display:block;min-width:0}
+.stage-num{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.2em;color:var(--brass)}
+.stage-label{font-family:var(--display);font-size:14.5px;font-weight:400;color:var(--vellum-dim);line-height:1.3;margin-top:1px}
+.stage[aria-current="true"] .stage-label{color:var(--vellum)}
+.stage-sub{font-family:var(--mono);font-size:10px;color:var(--brass-dim);line-height:1.45;margin-top:3px}
+
+/* ---- vellum sheet ---- */
+.sheet{position:relative;background:var(--vellum);color:var(--ink);border-radius:11px;padding:32px 34px 30px;overflow:hidden;box-shadow:0 20px 44px -26px #000,0 0 0 1px rgba(0,0,0,.28)}
+.ghost{position:absolute;top:6px;right:22px;font-family:var(--display);font-size:132px;font-weight:300;line-height:1;color:rgba(0,0,0,.045);pointer-events:none;user-select:none}
+.sheet-head{position:relative}
+.sheet-eyebrow{font-family:var(--mono);font-size:10.5px;letter-spacing:.2em;text-transform:uppercase;color:var(--brass);margin:0}
+.sheet h2{font-family:var(--display);font-weight:500;font-size:26px;line-height:1.18;letter-spacing:-.01em;margin:7px 0 0;color:var(--ink);text-wrap:balance}
+.sheet-note{margin:12px 0 0;font-size:13.5px;line-height:1.66;color:var(--ink-dim);max-width:66ch}
+
+.meta{display:flex;flex-wrap:wrap;gap:7px;margin:18px 0 0}
+.pill{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;padding:5px 9px;border-radius:999px;border:1px solid rgba(0,0,0,.16);background:rgba(0,0,0,.035);color:var(--ink-dim);white-space:nowrap}
+.pill.tool{border-color:rgba(139,115,85,.5);color:#6E5734;background:rgba(139,115,85,.1)}
+
+.custody{margin:24px 0 0;border-top:1px solid var(--ink-rule);padding-top:18px;display:grid;gap:12px}
+.chip{display:grid;grid-template-columns:92px minmax(0,1fr);gap:12px;align-items:start}
+.chip-key{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;padding-top:3px}
+.chip-key.recv{color:var(--ink-recv)}
+.chip-key.hold{color:var(--ink-hold)}
+.chip-val{font-size:13.5px;line-height:1.6;color:var(--ink)}
+@media (max-width:520px){.chip{grid-template-columns:minmax(0,1fr);gap:3px}}
+
+.prompt-key{font-family:var(--mono);font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass);margin:24px 0 8px}
+.prompt{margin:0;background:var(--ink-wash);border:1px solid var(--ink-rule);border-radius:8px;padding:15px 16px;font-family:var(--mono);font-size:11.5px;line-height:1.75;color:var(--ink-dim);white-space:pre-wrap;overflow-wrap:break-word}
+
+/* ---- calculator ---- */
+.field-key{font-family:var(--mono);font-size:10px;letter-spacing:.16em;text-transform:uppercase;color:var(--brass);margin:0 0 8px}
+.selwrap{position:relative}
+.selwrap svg{position:absolute;right:12px;top:50%;margin-top:-7px;pointer-events:none;stroke:var(--brass)}
+select.select{width:100%;appearance:none;-webkit-appearance:none;background:var(--panel);color:var(--vellum);border:1px solid var(--panel-edge);border-radius:8px;padding:11px 34px 11px 12px;font-family:var(--mono);font-size:12.5px;cursor:pointer}
+select.select option,select.select optgroup{background:var(--panel);color:var(--vellum)}
+select.select option:disabled{color:var(--brass-dim)}
+
+.facts{margin:16px 0 0;display:grid;gap:7px}
+.fact{display:flex;justify-content:space-between;gap:12px;font-family:var(--mono);font-size:11px;color:var(--brass-dim);border-bottom:1px solid var(--panel-edge);padding-bottom:6px}
+.fact b{font-weight:500;color:var(--vellum-dim);font-variant-numeric:tabular-nums}
+.rail-note{margin:16px 0 0;font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--brass-dim)}
+
+.btnrow{display:flex;flex-wrap:wrap;gap:9px;margin-top:18px}
+.btn{display:inline-flex;align-items:center;gap:8px;font-family:var(--mono);font-size:11px;letter-spacing:.07em;text-transform:uppercase;padding:11px 15px;border-radius:8px;border:1px solid transparent;cursor:pointer;background:transparent;color:var(--brass)}
+.btn-primary{background:var(--gold);color:var(--void);border-color:var(--gold);font-weight:500}
+.btn-ghost{border-color:var(--brass-dim);color:var(--brass)}
+.btn-ghost:hover{color:var(--vellum-dim);border-color:var(--brass)}
+.btn-primary:hover{filter:brightness(1.07)}
+.btn svg{stroke:currentColor}
+
+.warn{margin:22px 0 4px;border:1px solid var(--gold);background:rgba(201,162,39,.13);border-radius:8px;padding:14px 16px}
+.warn-key{font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;color:#7C6209;margin:0 0 7px}
+.warn p{margin:0;font-size:12.5px;line-height:1.68;color:#4A4335}
+.warn p+p{margin-top:9px}
+
+.steps{margin:22px 0 0}
+.step{display:flex;gap:15px;align-items:flex-start;padding:11px 0;border-bottom:1px solid rgba(0,0,0,.09)}
+.step-n{flex:0 0 auto;font-family:var(--mono);font-size:10.5px;color:var(--brass);padding-top:4px;font-variant-numeric:tabular-nums}
+.step-main{flex:1 1 auto;min-width:0}
+.step-label{font-family:var(--display);font-size:14.5px;line-height:1.3;color:var(--ink)}
+.step-formula{font-family:var(--mono);font-size:11px;line-height:1.5;color:var(--ink-dim);margin-top:3px;overflow-wrap:break-word}
+.step-val{flex:0 0 auto;font-family:var(--mono);font-size:13.5px;color:var(--ink);font-variant-numeric:tabular-nums;padding-top:2px;text-align:right}
+.step.total{border-bottom:none}
+.step.total .step-label{font-weight:600}
+
+.effrow{display:flex;justify-content:space-between;align-items:baseline;gap:16px;margin-top:16px;padding-top:16px;border-top:1px solid rgba(0,0,0,.16)}
+.effrow-label{font-family:var(--display);font-size:15px;color:var(--ink)}
+.effval{font-family:var(--mono);font-size:21px;color:var(--red);font-variant-numeric:tabular-nums;text-align:right}
+.effval.nm{font-size:19px;color:var(--brass)}
+.effval small{display:block;font-size:9.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--brass);margin-top:3px}
+
+.assump{margin:9px 0 0;font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--brass)}
+.csvbox{display:block;width:100%;min-height:230px;margin-top:16px;background:var(--ink-wash);border:1px solid var(--ink-rule);border-radius:8px;padding:12px;font-family:var(--mono);font-size:10.5px;line-height:1.6;color:var(--ink);resize:vertical;white-space:pre;overflow:auto}
+.csvbox[hidden]{display:none}
+
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(10px);background:var(--panel);border:1px solid var(--brass-dim);color:var(--vellum);font-family:var(--mono);font-size:11.5px;padding:10px 18px;border-radius:999px;opacity:0;pointer-events:none;transition:opacity .22s ease,transform .22s ease;z-index:60;max-width:88vw;text-align:center}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.colophon{margin:56px 0 0;padding-top:22px;border-top:1px solid var(--panel-edge);display:grid;gap:10px}
+.colophon p{margin:0;font-size:12.5px;line-height:1.68;color:var(--brass);max-width:74ch}
+.colophon b{color:var(--vellum-dim);font-weight:600}
+.colophon a{color:var(--gold);text-decoration:none;border-bottom:1px solid rgba(201,162,39,.4)}
+.colophon a:hover{border-bottom-color:var(--gold)}
+
+@media (prefers-reduced-motion:reduce){*,*::before,*::after{transition:none!important;animation:none!important}}
+</style>
+
+<div class="shell">
+  <header>
+    <p class="eyebrow">Case File — Blackstone Carried Interest</p>
+    <h1 class="title">Blackstone Carry Docket</h1>
+    <p class="lede">Two branches of one review. A six-agent chain of custody that walks a carry disclosure from raw filing to a graded verdict — and a deterministic waterfall calculator that does the carry math in real code, per fund, with its own limits printed on the page.</p>
+  </header>
+
+  <div class="tabs" role="tablist" aria-label="Case file branches">
+    <button class="tab" id="tab-review" role="tab" aria-selected="true" aria-controls="branch-review" type="button">Branch 1 — Disclosure Review</button>
+    <button class="tab" id="tab-calc" role="tab" aria-selected="false" aria-controls="branch-calc" type="button">Branch 2 — Carry Calculator</button>
+  </div>
+
+  <!-- ============ BRANCH 1 ============ -->
+  <div id="branch-review" role="tabpanel" aria-labelledby="tab-review">
+    <div class="notice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>
+      <p><strong>This page documents the pipeline; it does not run it.</strong> All six stages call the Anthropic Messages API with no key in the client — which only ever worked inside Claude's own artifact sandbox, where the request is proxied and authenticated invisibly. A published page can't reach that endpoint, so what's rendered here is the architecture itself: every stage's real system prompt, its model settings, and exactly what it is and isn't allowed to see. Branch 2's calculator is plain arithmetic and runs in full.</p>
+    </div>
+
+    <p class="section-key">Custody of the raw filing</p>
+    <div class="strip" id="strip"></div>
+    <div class="strip-legend">
+      <span><i class="dot on"></i> Stage holds the original source text</span>
+      <span><i class="dot"></i> Stage works only from a predecessor's output</span>
+    </div>
+
+    <div class="branch">
+      <nav class="rail" id="rail" aria-label="Pipeline stages"></nav>
+      <article class="sheet" id="stage-sheet"></article>
+    </div>
+
+    <div class="btnrow">
+      <button class="btn btn-ghost" id="btn-prompts" type="button">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+        Save all six prompts (.txt)
+      </button>
+    </div>
+  </div>
+
+  <!-- ============ BRANCH 2 ============ -->
+  <div id="branch-calc" role="tabpanel" aria-labelledby="tab-calc" hidden>
+    <div class="notice">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21.7 16.5-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 19.5h16a2 2 0 0 0 1.7-3Z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+      <p><strong>Standard assumptions, not Blackstone's disclosed terms.</strong> An 8% hurdle, 100% catch-up and 20% carry on a European whole-fund waterfall. Branch 1's own retriever found real disclosed hurdles ranging 5–10% by filing year and vehicle type, which this flat assumption does not match. This is a teaching model for how the waterfall works — not an economic estimate for any fund.</p>
+    </div>
+
+    <div class="branch">
+      <div>
+        <p class="field-key">Select fund</p>
+        <div class="selwrap">
+          <select class="select" id="fund-select" aria-label="Select fund"></select>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+        </div>
+        <div class="facts" id="facts"></div>
+        <p class="rail-note" id="rail-note"></p>
+        <div class="btnrow">
+          <button class="btn btn-primary" id="btn-csv" type="button" hidden>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+            Save CSV
+          </button>
+          <button class="btn btn-ghost" id="btn-csv-view" type="button">View CSV — all funds</button>
+        </div>
+      </div>
+
+      <article class="sheet" id="calc-sheet"></article>
+    </div>
+  </div>
+
+  <footer class="colophon">
+    <p><b>Data.</b> Blackstone fund performance reference table, figures as of <b>June 30, 2026</b>. Committed and available capital in $B; MOIC and net IRR as reported. Of the 35 vehicles listed, 27 carry enough public data for a time-based calculation; the remaining 8 are shown but not computed. A further 8 of the computed funds return a flag instead of an effective-carry figure, where the arithmetic is sound but the answer would mislead.</p>
+    <p><b>Method.</b> Paid-in capital is committed less available. Years elapsed run from the midpoint of the deployment window to the June 2026 report date, floored at 0.1 and capped at 12 — a typical closed-end fund life — so realized funds stop accruing hurdle once they are actually done. Every figure on this page comes from the same <code>computeCarry</code> function that produces the CSV, so the export and the screen reconcile line for line.</p>
+    <p><b>Provenance.</b> Rendered from <code>carry-review.jsx</code> on branch <code>claude/session-completion-checklist-5nb1jo</code> of the Blackstone-Carry-Project repository. The waterfall math, the fund table, the warning thresholds and the six system prompts are reproduced unchanged from that source.</p>
+  </footer>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   Fund reference data — reproduced verbatim from carry-review.jsx.
+   Figures as of June 30, 2026.
+
+   clearsHurdle is set by hand, not derived at runtime: it means the
+   fund's DISCLOSED net IRR is settled and at or above 12%, so it beat
+   the 8% hurdle regardless of what the waterfall below computes. 12%
+   rather than 8% because IRR and hurdle-on-paid-in are not computed the
+   same way — a fund at 8-9% is genuinely too close to call. Omitted for
+   any IRR the source labels "(early)", "(very early)", "not meaningful"
+   or "early history". Absence means "not clearly above the hurdle", not
+   "nobody checked".
+   ============================================================ */
+const FUNDS = [
+  { name: "BCP I-III", period: "1987-2002", start: 1987, end: 2002, committed: 6.2, available: 0.0, moic: 2.4, irr: "19%", clearsHurdle: true, status: "Fully realized / mature" },
+  { name: "BCOM", period: "2000-2006", start: 2000, end: 2006, committed: 2.1, available: 0.0, moic: 1.4, irr: "6%", status: "Fully realized / mature" },
+  { name: "BCP IV", period: "2002-2005", start: 2002, end: 2005, committed: 6.5, available: 0.0, moic: 2.9, irr: "36%", clearsHurdle: true, status: "Fully realized / mature" },
+  { name: "BCP V", period: "2005-2011", start: 2005, end: 2011, committed: 21.0, available: 1.0, moic: 1.9, irr: "8%", status: "Harvesting" },
+  { name: "BCP VI", period: "2011-2016", start: 2011, end: 2016, committed: 15.2, available: 1.3, moic: 2.2, irr: "12%", clearsHurdle: true, status: "Harvesting" },
+  { name: "BCP VII", period: "2016-2020", start: 2016, end: 2020, committed: 18.9, available: 1.3, moic: 2.1, irr: "12%", clearsHurdle: true, status: "Harvesting" },
+  { name: "BCP VIII", period: "2020-2024", start: 2020, end: 2024, committed: 25.8, available: 5.9, moic: 1.6, irr: "10%", status: "Post-investment period / harvesting" },
+  { name: "BCP IX", period: "2024-2030", start: 2024, end: 2030, committed: 21.8, available: 18.4, moic: 1.5, irr: "24% (early)", status: "In investment period" },
+  { name: "Energy I", period: "2011-2015", start: 2011, end: 2015, committed: 2.4, available: 0.2, moic: 2.0, irr: "12%", clearsHurdle: true, status: "Mature / harvesting" },
+  { name: "Energy II", period: "2015-2020", start: 2015, end: 2020, committed: 4.9, available: 0.8, moic: 2.0, irr: "9%", status: "Harvesting" },
+  { name: "Energy III", period: "2020-2024", start: 2020, end: 2024, committed: 4.4, available: 1.8, moic: 3.0, irr: "33%", clearsHurdle: true, status: "Post-investment period" },
+  { name: "Energy Transition IV", period: "2024-2026", start: 2024, end: 2026, committed: 5.9, available: 2.8, moic: 2.0, irr: "94% (very early)", status: "Recently ended investment period" },
+  { name: "Energy Transition V", period: "2026-2032", start: 2026, end: 2032, committed: 5.7, available: 5.7, moic: null, irr: null, status: "New / in investment period" },
+  { name: "BCP Asia I", period: "2017-2021", start: 2017, end: 2021, committed: 2.4, available: 0.4, moic: 2.3, irr: "19%", clearsHurdle: true, status: "Harvesting" },
+  { name: "BCP Asia II", period: "2021-2027", start: 2021, end: 2027, committed: 6.8, available: 3.6, moic: 2.0, irr: "27%", clearsHurdle: true, status: "In investment period" },
+  { name: "BCP Asia III", period: "TBD (final close 2Q26)", start: 2026, end: 2026, committed: 13.1, available: 13.1, moic: null, irr: null, status: "Final close completed 2Q26" },
+  { name: "Core Private Equity I", period: "2017-2021", start: 2017, end: 2021, committed: 4.8, available: 1.2, moic: 2.5, irr: "14%", clearsHurdle: true, status: "Harvesting" },
+  { name: "Core Private Equity II", period: "2021-2027", start: 2021, end: 2027, committed: 8.2, available: 6.0, moic: 1.8, irr: "16%", clearsHurdle: true, status: "In investment period" },
+  { name: "Tactical Opportunities", period: "Various", start: null, end: null, committed: 33.8, available: 14.4, moic: 1.6, irr: "10%", status: "Multiple vintages; active" },
+  { name: "Tactical Opportunities Co-invest & Other", period: "Various", start: null, end: null, committed: 10.5, available: 1.1, moic: 1.7, irr: "15%", status: "Multiple vintages" },
+  { name: "BXG I", period: "2020-2025", start: 2020, end: 2025, committed: 5.0, available: 0.3, moic: 1.2, irr: "2%", status: "Post-investment period" },
+  { name: "BXG II", period: "2025-2030", start: 2025, end: 2030, committed: 4.6, available: 3.7, moic: 1.1, irr: "not meaningful", status: "In investment period" },
+  { name: "Strategic Partners I-V", period: "Various", start: null, end: null, committed: 11.0, available: 0.0, moic: 1.7, irr: "13%", status: "Mature vintages" },
+  { name: "Strategic Partners VI", period: "2014-2016", start: 2014, end: 2016, committed: 4.4, available: 0.4, moic: 1.7, irr: "13%", clearsHurdle: true, status: "Harvesting" },
+  { name: "Strategic Partners VII", period: "2016-2019", start: 2016, end: 2019, committed: 7.5, available: 1.6, moic: 1.9, irr: "15%", clearsHurdle: true, status: "Harvesting" },
+  { name: "Strategic Partners VIII", period: "2019-2021", start: 2019, end: 2021, committed: 10.8, available: 3.4, moic: 1.7, irr: "17%", clearsHurdle: true, status: "Harvesting" },
+  { name: "Strategic Partners IX", period: "2021-2026", start: 2021, end: 2026, committed: 19.7, available: 1.5, moic: 1.5, irr: "17%", clearsHurdle: true, status: "Investment period ended Mar. 2026" },
+  { name: "Strategic Partners X", period: "2026-2031", start: 2026, end: 2031, committed: 11.0, available: 8.6, moic: null, irr: null, status: "In investment period" },
+  { name: "Strategic Partners GP Solutions", period: "2024-2026", start: 2024, end: 2026, committed: 2.1, available: 0.3, moic: 1.1, irr: "early history", status: "Recently ended investment period" },
+  { name: "Strategic Partners Infrastructure III", period: "2020-2024", start: 2020, end: 2024, committed: 3.3, available: 0.7, moic: 1.6, irr: "15%", clearsHurdle: true, status: "Harvesting" },
+  { name: "Strategic Partners Infrastructure IV", period: "2024-2029", start: 2024, end: 2029, committed: 4.8, available: 3.5, moic: 1.9, irr: "not meaningful", status: "In investment period" },
+  { name: "Clarus IV", period: "2018-2020", start: 2018, end: 2020, committed: 0.9, available: 0.0, moic: 1.7, irr: "9%", status: "Harvesting" },
+  { name: "BXLS V", period: "2020-2025", start: 2020, end: 2025, committed: 5.1, available: 2.3, moic: 2.0, irr: "17%", clearsHurdle: true, status: "Post-investment period" },
+  { name: "BXLS VI", period: "2025-2031", start: 2025, end: 2031, committed: 6.5, available: 6.4, moic: null, irr: null, status: "In investment period" },
+  { name: "BXPE platform", period: "Evergreen", start: null, end: null, committed: null, available: null, moic: null, irr: null, status: "Continuous fundraising / deployment" },
+];
+
+const REPORT_DATE_DEC = 2026.5;      // June 30, 2026
+const HURDLE_RATE = 0.08;
+const CATCHUP_MULT = 0.25;           // hurdle * (20/80)
+const CARRY_SPLIT = 0.2;
+const MAX_FUND_LIFE_YEARS = 12;      // mature funds stop accruing hurdle (Bug #1)
+const MIN_YEARS = 0.1;               // funds still deploying have a future midpoint
+
+function isComputable(f){
+  return f.start != null && f.end != null && typeof f.committed === "number" && typeof f.available === "number" && typeof f.moic === "number";
+}
+
+function computeCarry(f){
+  const paidIn = f.committed - f.available;
+  const years = Math.min(Math.max(REPORT_DATE_DEC - (f.start + f.end) / 2, MIN_YEARS), MAX_FUND_LIFE_YEARS);
+  const totalValue = f.moic * paidIn;
+  const profit = totalValue - paidIn;
+  const hurdleAmt = paidIn * (Math.pow(1 + HURDLE_RATE, years) - 1);
+
+  let catchUp = 0, gpSplit = 0, lpSplit = 0;
+  if (profit > hurdleAmt) {
+    const remaining = profit - hurdleAmt;
+    catchUp = Math.min(remaining, hurdleAmt * CATCHUP_MULT);
+    const afterCatchUp = remaining - catchUp;
+    gpSplit = afterCatchUp * CARRY_SPLIT;
+    lpSplit = afterCatchUp * (1 - CARRY_SPLIT);
+  }
+  const gpTotal = catchUp + gpSplit;
+  const lpTotal = paidIn + Math.min(profit, hurdleAmt) + lpSplit;
+  const effectivePct = profit > 0 ? gpTotal / profit : 0;
+
+  return { paidIn, years, totalValue, profit, hurdleAmt, catchUp, gpSplit, lpSplit, gpTotal, lpTotal, effectivePct };
+}
+
+/* Conditions where the number is real arithmetic but a misleading answer,
+   so it gets flagged rather than presented as comparable. */
+function getWarnings(f, c){
+  const warnings = [];
+  if (c.years <= MIN_YEARS) {
+    warnings.push(
+      f.name + " is still early in its deployment window — the midpoint of " + f.period + " falls at or after the June 2026 report date, so effectively no hurdle has accrued (" + (c.hurdleAmt * 1000).toFixed(0) + "M on $" + c.paidIn.toFixed(2) + "B paid-in). With almost nothing to clear, the GP takes the full 20%. This carry is computed against unrealized marks, not distributions, and is almost certainly overstated."
+    );
+  }
+  if (f.clearsHurdle && c.effectivePct < 0.005) {
+    warnings.push(
+      f.name + " reports a " + f.irr + " net IRR — comfortably clear of the 8% hurdle — yet this model computes essentially no carry for it. The model assumes every dollar was paid in at once at the midpoint of " + f.period + " and sat there, so it compounds a full " + c.years.toFixed(1) + "-year hurdle ($" + c.hurdleAmt.toFixed(2) + "B) against $" + c.profit.toFixed(2) + "B of profit. Real funds call and return capital gradually, and the public data carries no capital-call timing to model that with. Treat the figure below as understated, not as an estimate."
+    );
+  }
+  return warnings;
+}
+
+/* Columns mirror the nine waterfall steps on screen, in the same order,
+   so the export and the calculation reconcile line for line. */
+const CSV_HEADER = [
+  "Fund","Period","Committed ($B)","Available ($B)","Paid-in ($B)","MOIC",
+  "Reported net IRR","Total value ($B)","Profit ($B)","Years elapsed",
+  "Hurdle owed ($B)","GP catch-up ($B)","GP 80/20 split ($B)",
+  "GP carry total ($B)","LP proceeds ($B)","Effective carry %","Status","Warnings"
+];
+
+function toCSV(){
+  const rows = [CSV_HEADER];
+  FUNDS.forEach(function(f){
+    if (!isComputable(f)) {
+      rows.push([
+        f.name, f.period, f.committed != null ? f.committed : "n/d", f.available != null ? f.available : "n/d", "n/a", f.moic != null ? f.moic : "n/a",
+        f.irr != null ? f.irr : "n/a", "n/a", "n/a", "n/a",
+        "n/a", "n/a", "n/a",
+        "n/a", "n/a", "insufficient data", f.status, ""
+      ]);
+      return;
+    }
+    const c = computeCarry(f);
+    const w = getWarnings(f, c);
+    rows.push([
+      f.name, f.period, f.committed.toFixed(1), f.available.toFixed(1), c.paidIn.toFixed(2), f.moic.toFixed(2),
+      f.irr != null ? f.irr : "n/d", c.totalValue.toFixed(2), c.profit.toFixed(2), c.years.toFixed(1),
+      c.hurdleAmt.toFixed(2), c.catchUp.toFixed(2), c.gpSplit.toFixed(2),
+      c.gpTotal.toFixed(2), c.lpTotal.toFixed(2),
+      w.length ? "n/m" : (c.effectivePct * 100).toFixed(1) + "%", f.status,
+      w.join(" ")
+    ]);
+  });
+  return rows.map(function(r){
+    return r.map(function(v){ return '"' + String(v).replace(/"/g, '""') + '"'; }).join(",");
+  }).join("\n");
+}
+
+/* ============================================================
+   Branch 1 — the six stages, their real prompts and their custody.
+   ============================================================ */
+const ICONS = {
+  search: '<circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/>',
+  file: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="M8 13h8"/><path d="M8 17h6"/>',
+  scissors: '<circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4 8.12 15.88"/><path d="M14.47 14.48 20 20"/><path d="M8.12 8.12 12 12"/>',
+  shield: '<path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="M12 8v4"/><path d="M12 16h.01"/>',
+  check: '<path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z"/><path d="M14 2v5h5"/><path d="m9 15 2 2 4-4"/>',
+  gavel: '<path d="m14.5 12.5-8 8a2.12 2.12 0 1 1-3-3l8-8"/><path d="m16 16 6-6"/><path d="m8 8 6-6"/><path d="m9 7 8 8"/><path d="m21 11-8-8"/>'
+};
+
+const STAGES = [
+  {
+    key: "retrieve", label: "Retrieve source", short: "Retrieve",
+    sub: "web_search · sec.gov, blackstone.com", icon: "search", holdsSource: true,
+    note: "The only stage that touches the outside world. It is confined to two domains, required to date every filing it quotes, and forbidden from interpreting what it finds — the interpretation is the next stage's job, and separating them is what makes the handoff testable.",
+    receives: "Nothing upstream. One instruction and a live web search.",
+    withheld: "No predecessor exists — this stage produces the source of truth everything downstream is measured against.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "90s timeout", "3 attempts"],
+    tool: "web_search_20260209",
+    prompt: "You are a retrieval agent. Your ONLY job is to find Blackstone's actual disclosed carried interest / performance revenue terms — hurdle rate, catch-up mechanics, GP/LP split, crystallization or realization triggers. Restrict yourself to sec.gov and blackstone.com results only — ignore and do not cite any other domain. PREFER THE MOST RECENT FILING AVAILABLE — actively search for current-year filings, not just whatever surfaces first. Always state the filing's date/fiscal year explicitly (e.g. 'From Blackstone's FY2024 10-K') so staleness is visible to the reader — never present disclosure language without dating it. Before citing any source, VERIFY the document type in your label matches the document type in the actual URL/filing you're citing (e.g. don't label something '10-K' if the underlying document is actually a 10-Q) — a mismatched label is worse than no label. If the most recent filing's language differs from older filings, prefer and quote the recent version. If you cannot find primary-source text at those two domains, say so plainly and return nothing else. Do not explain or interpret — return the relevant raw disclosure text, then 'SOURCE:' followed by the URL."
+  },
+  {
+    key: "mechanics", label: "Mechanics explainer", short: "Mechanics",
+    sub: "hurdle, catch-up, split, triggers", icon: "file", holdsSource: true,
+    note: "The last stage that ever sees the filing. It is told to say plainly when the source does not cover a term, rather than filling the gap with a plausible industry default — an omission the summarizer and skeptic downstream would have no way to detect.",
+    receives: "Stage 01's raw disclosure text, verbatim.",
+    withheld: "Nothing. From here on, the filing itself drops out of the chain.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "45s timeout", "3 attempts"],
+    prompt: "You are a technical accounting mechanics explainer. Given raw disclosure text about a PE firm's carried interest structure, produce a clear, structured explanation covering: hurdle rate, catch-up percentage and mechanics, GP/LP split above catch-up, and what triggers crystallization/realization of carry. Cite specific language from the source where it supports a claim. If the source doesn't cover a term, say so explicitly rather than filling in a generic assumption."
+  },
+  {
+    key: "summarize", label: "Neutral summarizer", short: "Summarize",
+    sub: "blind compression", icon: "scissors", holdsSource: false,
+    note: "Blind by design. Cutting a structured explanation to three to five sentences without the filing to check against is where a pipeline quietly loses things, so the loss is made measurable instead of avoided. The prompt's one hard rule exists because of an observed failure: two distinct disclosed figures for two distinct vehicles were being blended into a single vague range.",
+    receives: "Stage 02's explanation, and nothing else.",
+    withheld: "The raw filing. It cannot verify a single claim it is compressing.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "45s timeout", "3 attempts"],
+    prompt: "You are a neutral summarizer. You have NOT seen the original source — only the explanation below. Compress it into 3-5 tight sentences covering the key mechanics. You have no stake in defending its reasoning; compress faithfully and flag anything that seemed hedged or uncertain. CRITICAL: if the explanation gives different specific figures for different fund/vehicle types (e.g. 12.5% for one vehicle, 20% for another), preserve those as distinct attributed figures — do NOT blend multiple specific numbers into a single vague range (e.g. never write '10-20% depending on structure' when the source actually gave two distinct numbers for two distinct things). A specific number tied to the wrong thing is worse than no number."
+  },
+  {
+    key: "skeptic", label: "Disclosure skeptic", short: "Skeptic",
+    sub: "summary only, no raw text", icon: "shield", holdsSource: false,
+    note: "Reviews the compressed summary the way a second reviewer reviews a colleague's memo: without the underlying file. That is the realistic case, and it is the one worth testing — a skeptic who could read the filing would be checking facts, not judging whether the write-up stands on its own.",
+    receives: "Stage 03's three-to-five sentence summary, and nothing else.",
+    withheld: "The raw filing and Stage 02's full reasoning. It sees the narrowest slice in the chain.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "45s timeout", "3 attempts"],
+    prompt: "You are a skeptical second reviewer double-checking a colleague's work. You are given ONLY a summary (not the full filing or the original explainer's full reasoning) of a PE firm's carry disclosure. Identify what's asserted but not substantiated, ambiguous timing/trigger language, unclear fund-level vs deal-by-deal treatment, and what a real reviewer would flag before signing off. Be specific — do not just restate the summary in a suspicious tone."
+  },
+  {
+    key: "synthesis", label: "Synthesis memo", short: "Synthesis",
+    sub: "mechanics + open questions", icon: "check", holdsSource: false,
+    note: "Merges the compressed mechanics with the skeptic's objections into the shape a reviewer actually signs: what we believe, and what we still need to ask. It inherits every distortion introduced upstream, which is precisely what the judge is positioned to catch.",
+    receives: "Stage 03's summary and Stage 04's open questions.",
+    withheld: "The raw filing. The memo is written entirely from second-hand accounts.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "45s timeout", "3 attempts"],
+    prompt: "You write final reviewer memos. Combine a mechanics summary and a skeptic's open questions into one short memo, formatted like a real technical accounting reviewer memo: a 'Mechanics' section and an 'Open Questions / Risk Flags' section. Keep it tight and professional."
+  },
+  {
+    key: "judge", label: "Judge", short: "Judge",
+    sub: "memo graded vs. raw source", icon: "gavel", holdsSource: true,
+    note: "Grades the finished memo against the original filing — never against an intermediate. Comparing the two endpoints is what turns the deliberate context restrictions upstream into a measurement: whatever the filing said and the memo does not is exactly what the handoffs cost. Returns strict JSON, scored 0–10 on three axes.",
+    receives: "Stage 01's raw source and Stage 05's final memo — the two ends of the chain.",
+    withheld: "Every intermediate stage. It grades the endpoints, not the handoffs.",
+    pills: ["claude-sonnet-5", "max_tokens 4000", "thinking off", "45s timeout", "3 attempts", "JSON out"],
+    prompt: 'You are a fidelity judge. Compare a final synthesis memo against the ORIGINAL raw source text (not any intermediate agent output) and grade the pipeline on three axes, each 0-10: completeness, accuracy, skepticValueAdd. Respond ONLY with JSON, no preamble, no markdown fences: {"completeness": {"score": number, "note": string}, "accuracy": {"score": number, "note": string}, "skepticValueAdd": {"score": number, "note": string}, "overall": string}'
+  }
+];
+
+const $ = function(id){ return document.getElementById(id); };
+function svg(name, size){
+  return '<svg width="' + size + '" height="' + size + '" viewBox="0 0 24 24" fill="none" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>';
+}
+function pad(n){ return String(n).padStart(2, "0"); }
+
+/* ---- toast ---- */
+let toastTimer = null;
+function toast(msg){
+  const t = $("toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(function(){ t.classList.remove("show"); }, 4200);
+}
+
+/* ---- downloads capability ---- */
+let downloadsApi = null;
+(async function initDownloads(){
+  try {
+    const c = window.claude;
+    if (c && typeof c.use === "function") downloadsApi = await c.use("downloads");
+  } catch (e) { downloadsApi = null; }
+  if (downloadsApi) {
+    $("btn-csv").hidden = false;
+  } else {
+    $("btn-prompts").hidden = true;
+  }
+})();
+
+async function saveFile(filename, data, altFilename){
+  if (!downloadsApi) { toast("Saving files isn't available in this view."); return; }
+  try {
+    await downloadsApi.save({ filename: filename, data: data });
+    toast("Saved " + filename);
+    return;
+  } catch (e) {
+    const code = e && e.code;
+    if (code === "declined") return;
+    if (code === "rate_limited") { toast("A save prompt is already open — finish that one first."); return; }
+    if (code === "extension_not_enabled" && altFilename) {
+      try {
+        await downloadsApi.save({ filename: altFilename, data: data });
+        toast("Saved " + altFilename + " — .csv isn't enabled here, so it saved as text.");
+        return;
+      } catch (e2) {
+        if (e2 && e2.code === "declined") return;
+      }
+    }
+    toast("Couldn't save that file.");
+  }
+}
+
+function esc(s){
+  return String(s).replace(/[&<>"']/g, function(ch){
+    return { "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[ch];
+  });
+}
+
+/* ============================================================
+   Branch 1 rendering
+   ============================================================ */
+function renderStrip(){
+  $("strip").innerHTML = STAGES.map(function(s, i){
+    return '<div class="strip-cell' + (s.holdsSource ? " has" : "") + '"><b>' + pad(i + 1) + '</b>' + esc(s.short) + '</div>';
+  }).join("");
+}
+
+function renderRail(activeKey){
+  $("rail").innerHTML = STAGES.map(function(s, i){
+    return '<button type="button" class="stage" data-key="' + s.key + '" aria-current="' + (s.key === activeKey) + '">' +
+      '<span class="stage-dot">' + svg(s.icon, 14) + '</span>' +
+      '<span class="stage-main">' +
+        '<span class="stage-num">' + pad(i + 1) + '</span>' +
+        '<span class="stage-label" style="display:block">' + esc(s.label) + '</span>' +
+        '<span class="stage-sub" style="display:block">' + esc(s.sub) + '</span>' +
+      '</span>' +
+    '</button>';
+  }).join("");
+  Array.prototype.forEach.call($("rail").querySelectorAll(".stage"), function(btn){
+    btn.addEventListener("click", function(){ selectStage(btn.getAttribute("data-key")); });
+  });
+}
+
+function renderStage(key){
+  const i = STAGES.findIndex(function(s){ return s.key === key; });
+  const s = STAGES[i];
+  const pills = s.pills.map(function(p){ return '<span class="pill">' + esc(p) + '</span>'; }).join("");
+  const toolPill = s.tool ? '<span class="pill tool">tool · ' + esc(s.tool) + '</span>' : "";
+  $("stage-sheet").innerHTML =
+    '<div class="ghost">' + pad(i + 1) + '</div>' +
+    '<div class="sheet-head">' +
+      '<p class="sheet-eyebrow">Stage ' + pad(i + 1) + ' · ' + esc(s.sub) + '</p>' +
+      '<h2>' + esc(s.label) + '</h2>' +
+      '<p class="sheet-note">' + esc(s.note) + '</p>' +
+      '<div class="meta">' + pills + toolPill + '</div>' +
+      '<div class="custody">' +
+        '<div class="chip"><span class="chip-key recv">Receives</span><span class="chip-val">' + esc(s.receives) + '</span></div>' +
+        '<div class="chip"><span class="chip-key hold">Withheld</span><span class="chip-val">' + esc(s.withheld) + '</span></div>' +
+      '</div>' +
+      '<p class="prompt-key">System prompt, verbatim</p>' +
+      '<p class="prompt">' + esc(s.prompt) + '</p>' +
+    '</div>';
+}
+
+function selectStage(key){
+  renderRail(key);
+  renderStage(key);
+}
+
+/* ============================================================
+   Branch 2 rendering
+   ============================================================ */
+const computable = FUNDS.filter(isComputable);
+const uncomputable = FUNDS.filter(function(f){ return !isComputable(f); });
+
+function renderSelect(){
+  const opt = function(f){
+    return '<option value="' + esc(f.name) + '">' + esc(f.name) + '</option>';
+  };
+  const optDis = function(f){
+    return '<option value="' + esc(f.name) + '" disabled>' + esc(f.name) + ' — n/a</option>';
+  };
+  $("fund-select").innerHTML =
+    '<optgroup label="Computable">' + computable.map(opt).join("") + '</optgroup>' +
+    '<optgroup label="Insufficient data">' + uncomputable.map(optDis).join("") + '</optgroup>';
+  $("rail-note").textContent =
+    uncomputable.length + " of " + FUNDS.length + " vehicles lack a reported MOIC or a single deployment window — evergreen platforms, multi-vintage programmes and funds too new to mark. They are listed but not computed.";
+}
+
+function renderFacts(f){
+  const rows = [
+    ["Period", f.period],
+    ["Status", f.status],
+    ["Committed", f.committed != null ? "$" + f.committed.toFixed(1) + "B" : "n/d"],
+    ["Available", f.available != null ? "$" + f.available.toFixed(1) + "B" : "n/d"],
+    ["MOIC", f.moic != null ? f.moic.toFixed(1) + "x" : "n/d"],
+    ["Net IRR", f.irr != null ? f.irr : "n/d"]
+  ];
+  $("facts").innerHTML = rows.map(function(r){
+    return '<div class="fact"><span>' + esc(r[0]) + '</span><b>' + esc(r[1]) + '</b></div>';
+  }).join("");
+}
+
+function step(n, label, formula, value, isTotal){
+  return '<div class="step' + (isTotal ? " total" : "") + '">' +
+    '<span class="step-n">' + pad(n) + '</span>' +
+    '<span class="step-main">' +
+      '<span class="step-label" style="display:block">' + esc(label) + '</span>' +
+      '<span class="step-formula" style="display:block">' + esc(formula) + '</span>' +
+    '</span>' +
+    '<span class="step-val">' + esc(value) + '</span>' +
+  '</div>';
+}
+
+function renderCalc(name){
+  const f = FUNDS.find(function(x){ return x.name === name; });
+  renderFacts(f);
+
+  if (!isComputable(f)) {
+    $("calc-sheet").innerHTML =
+      '<div class="sheet-head"><h2>' + esc(f.name) + '</h2>' +
+      '<p class="sheet-note">' + esc(f.name) + " doesn't have enough public data for a time-based calculation — " +
+      esc(f.period === "Various" ? "multiple vintages with no single deployment date." : "no reported MOIC yet.") +
+      '</p></div>';
+    return;
+  }
+
+  const c = computeCarry(f);
+  const w = getWarnings(f, c);
+
+  const warnHtml = w.length
+    ? '<div class="warn"><p class="warn-key">Model limitation</p>' + w.map(function(x){ return '<p>' + esc(x) + '</p>'; }).join("") + '</div>'
+    : "";
+
+  const eff = w.length
+    ? '<span class="effval nm">n/m<small>not meaningful — see above</small></span>'
+    : '<span class="effval">' + (c.effectivePct * 100).toFixed(1) + '%</span>';
+
+  $("calc-sheet").innerHTML =
+    '<div class="sheet-head">' +
+      '<p class="sheet-eyebrow">' + esc(f.period) + ' · ' + esc(f.status) + '</p>' +
+      '<h2>' + esc(f.name) + '</h2>' +
+      '<p class="assump">8% hurdle · 100% catch-up · 20% carry · European whole-fund</p>' +
+      warnHtml +
+      '<div class="steps">' +
+        step(1, "Paid-in capital", "$" + f.committed + "B committed − $" + f.available + "B available", "$" + c.paidIn.toFixed(2) + "B") +
+        step(2, "Total value", f.moic + "x MOIC × $" + c.paidIn.toFixed(2) + "B paid-in", "$" + c.totalValue.toFixed(2) + "B") +
+        step(3, "Profit", "$" + c.totalValue.toFixed(2) + "B total value − $" + c.paidIn.toFixed(2) + "B paid-in", "$" + c.profit.toFixed(2) + "B") +
+        step(4, "Years since deployment (approx.)", "June 2026 − midpoint of " + f.period, c.years.toFixed(1) + " yrs") +
+        step(5, "Compounded hurdle owed to LPs", "$" + c.paidIn.toFixed(2) + "B × (1.08^" + c.years.toFixed(1) + " − 1)", "$" + c.hurdleAmt.toFixed(2) + "B") +
+        step(6, "GP catch-up", "min(profit − hurdle, hurdle × 0.25)", "$" + c.catchUp.toFixed(2) + "B") +
+        step(7, "80/20 split above catch-up (GP side)", "(profit − hurdle − catch-up) × 20%", "$" + c.gpSplit.toFixed(2) + "B") +
+        step(8, "Total GP carry", "catch-up + GP's 20% share", "$" + c.gpTotal.toFixed(2) + "B", true) +
+        step(9, "LP total proceeds", "paid-in + hurdle + LP's 80% share", "$" + c.lpTotal.toFixed(2) + "B", true) +
+      '</div>' +
+      '<div class="effrow"><span class="effrow-label">Effective carry (% of profit)</span>' + eff + '</div>' +
+    '</div>';
+}
+
+/* ============================================================
+   Tabs, CSV, wiring
+   ============================================================ */
+function selectTab(which){
+  const isReview = which === "review";
+  $("tab-review").setAttribute("aria-selected", String(isReview));
+  $("tab-calc").setAttribute("aria-selected", String(!isReview));
+  $("branch-review").hidden = !isReview;
+  $("branch-calc").hidden = isReview;
+}
+
+$("tab-review").addEventListener("click", function(){ selectTab("review"); });
+$("tab-calc").addEventListener("click", function(){ selectTab("calc"); });
+
+$("fund-select").addEventListener("change", function(e){ renderCalc(e.target.value); });
+
+$("btn-prompts").addEventListener("click", function(){
+  const body = STAGES.map(function(s, i){
+    const bar = "=".repeat(60);
+    return bar + "\nSTAGE " + pad(i + 1) + ": " + s.label.toUpperCase() + "\n" + bar +
+      "\n\nContext window: " + s.sub +
+      "\nReceives: " + s.receives +
+      "\nWithheld: " + s.withheld +
+      "\nSettings: " + s.pills.join(" · ") + (s.tool ? " · tool " + s.tool : "") +
+      "\n\nSYSTEM PROMPT\n" + s.prompt + "\n";
+  }).join("\n");
+  const header = "BLACKSTONE CARRY DISCLOSURE REVIEW — PIPELINE SYSTEM PROMPTS\nSix stages, in execution order. Reproduced verbatim from carry-review.jsx.\n\n";
+  saveFile("blackstone_pipeline_prompts.txt", header + body);
+});
+
+let csvCache = null;
+$("btn-csv").addEventListener("click", function(){
+  if (csvCache === null) csvCache = toCSV();
+  saveFile("blackstone_pe_carry_for_dummies.csv", csvCache, "blackstone_pe_carry_for_dummies.txt");
+});
+
+$("btn-csv-view").addEventListener("click", function(){
+  let box = $("csvbox");
+  if (!box) {
+    if (csvCache === null) csvCache = toCSV();
+    box = document.createElement("textarea");
+    box.id = "csvbox";
+    box.className = "csvbox";
+    box.readOnly = true;
+    box.value = csvCache;
+    box.setAttribute("aria-label", "CSV export for all funds");
+    box.addEventListener("focus", function(){ box.select(); });
+    $("calc-sheet").insertAdjacentElement("afterend", box);
+    this.textContent = "Hide CSV";
+    box.focus();
+    return;
+  }
+  const showing = !box.hidden;
+  box.hidden = showing;
+  this.textContent = showing ? "View CSV — all funds" : "Hide CSV";
+  if (!showing) box.focus();
+});
+
+/* ---- init ---- */
+renderStrip();
+selectStage("retrieve");
+renderSelect();
+const initialFund = (computable[2] && computable[2].name) || computable[0].name;
+$("fund-select").value = initialFund;
+renderCalc(initialFund);
+</script>
