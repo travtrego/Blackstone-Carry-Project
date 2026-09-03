@@ -37,7 +37,7 @@ const SRC = join(HERE, "..", "carry-review.jsx");
 
 const START = "// ---------- API ----------";
 const END = "function useGoogleFont()";
-const EXPORTS = "callClaudeWithSearch, callClaude, callClaudeOnce, SEARCH_TOOL_VARIANTS, buildSearchTools, isUnsupportedToolTypeError, getSearchVariantNote, extractJSON, ApiError";
+const EXPORTS = "callClaudeWithSearch, callClaude, callClaudeOnce, SEARCH_TOOL_VARIANTS, buildSearchTools, isPossibleToolTypeRejection, getSearchVariantNote, extractJSON, ApiError";
 const src = await readFile(SRC, "utf8");
 const a = src.indexOf(START), b = src.indexOf(END);
 if (a === -1) throw new Error(`Could not find "${START}" in ${SRC}. Did the file get reorganised?`);
@@ -85,10 +85,13 @@ console.log("Search tool variant selection");
   check("no downgrade note when the modern variant is accepted", m.getSearchVariantNote() === null);
 }
 
-// 2. Fallback on a tool-type rejection.
+// 2. Fallback on a tool-type rejection — with error wording deliberately unlike
+// anything the code could pattern-match, since the sandbox's real phrasing has
+// never been observed. If this only passed for messages naming the type string,
+// the test would be checking the guess rather than the behaviour.
 {
   const m = await load();
-  const calls = stub([errBody(400, 'tools.0.type: unsupported tool type "web_search_20260209"'), okBody("ok")]);
+  const calls = stub([errBody(400, "Bad Request"), okBody("ok")]);
   const out = await m.callClaudeWithSearch({ system: "s", prompt: "p", toolSpec: { search: {}, fetch: {} } });
   check("falls back to the basic pair when the type is rejected",
     calls.length === 2 && calls[1].tools[0].type === "web_search_20250305" && calls[1].tools[1].type === "web_fetch_20250910" && out === "ok",
@@ -102,14 +105,22 @@ console.log("Search tool variant selection");
     calls2.length === 1 && calls2[0].tools[0].type === "web_search_20250305", calls2[0].tools[0].type);
 }
 
-// 4. An unrelated 400 must not trigger a downgrade.
+// 4. An unrelated 400 fails on both pairs, so it must leave no trace. The
+// downgrade is probed but not kept — a session permanently downgraded by a
+// billing error would quietly lose dynamic filtering for the rest of its life.
 {
   const m = await load();
   const calls = stub([errBody(400, "credit balance is too low")]);
   let threw = null;
   try { await m.callClaudeWithSearch({ system: "s", prompt: "p", toolSpec: { search: {} } }); } catch (e) { threw = e; }
-  check("an unrelated 400 does not downgrade the tool version",
-    calls.length === 1 && threw && m.getSearchVariantNote() === null, `${calls.length} call(s)`);
+  check("an unrelated 400 leaves no permanent downgrade",
+    threw && m.getSearchVariantNote() === null, `${calls.length} call(s), note=${m.getSearchVariantNote()}`);
+
+  // And the next call must still reach for the modern pair.
+  const calls2 = stub([okBody("fine")]);
+  await m.callClaudeWithSearch({ system: "s", prompt: "p", toolSpec: { search: {} } });
+  check("after an unrelated 400 the modern variant is still preferred",
+    calls2[0].tools[0].type === "web_search_20260209", calls2[0].tools[0].type);
 }
 
 // 5. Both generations failing reports both.
@@ -118,8 +129,9 @@ console.log("Search tool variant selection");
   stub([errBody(400, 'unsupported tool type "web_search_20260209"'), errBody(400, "still broken")]);
   let msg = "";
   try { await m.callClaudeWithSearch({ system: "s", prompt: "p", toolSpec: { search: {} } }); } catch (e) { msg = e.message; }
-  check("reports both errors when the fallback also fails",
-    msg.includes("web_search_20260209") && msg.includes("web_search_20250305") && msg.includes("still broken"), msg.slice(0, 80));
+  check("reports both errors, and says the tool type is not the cause",
+    msg.includes("web_search_20260209") && msg.includes("web_search_20250305") && msg.includes("still broken") && /not the cause/.test(msg),
+    msg.slice(0, 90));
 }
 
 console.log("\nBranch 1 is byte-for-byte unchanged");

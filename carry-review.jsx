@@ -496,16 +496,23 @@ function buildSearchTools(spec, variant) {
   return tools;
 }
 
-// A rejected tool type is a 400 naming the type string. The looser second test
-// catches a proxy that rejects by shape without echoing the type back. It leans
-// permissive on purpose: a false positive costs one extra call with the basic
-// pair, while a false negative leaves the feature dead in the water.
-function isUnsupportedToolTypeError(e, variant) {
-  if (!e || e.status !== 400) return false;
-  const v = SEARCH_TOOL_VARIANTS[variant];
-  const msg = String(e.message || "");
-  if (msg.includes(v.search) || msg.includes(v.fetch)) return true;
-  return /tool/i.test(msg) && /(unsupported|not supported|unknown|unrecognized|invalid)/i.test(msg) && /type/i.test(msg);
+// Any 400 is treated as possibly a tool-type rejection, rather than only one
+// whose wording matches a pattern.
+//
+// Matching on the message was the obvious approach and is the wrong one here:
+// the error text comes from a sandbox proxy nobody has ever seen the output of,
+// so any pattern is a guess. Guessing too narrowly is the expensive direction —
+// the fallback never fires, and Branch 1 stays broken in exactly the way that
+// prompted it. Guessing too broadly only costs one extra call.
+//
+// What makes the broad test safe is that the downgrade is not believed until it
+// is earned: it only sticks if the basic pair actually succeeds where the modern
+// pair failed, which is real evidence the tool type was the difference. A 400
+// from anything else — a malformed request, a billing problem — fails on both
+// pairs, and callClaudeWithSearch puts the variant back. So an unrelated error
+// cannot leave the session permanently downgraded.
+function isPossibleToolTypeRejection(e) {
+  return !!e && e.status === 400;
 }
 
 async function callClaudeWithSearch({ system, prompt, toolSpec, maxTokens, timeoutMs, thinking }) {
@@ -513,16 +520,21 @@ async function callClaudeWithSearch({ system, prompt, toolSpec, maxTokens, timeo
   try {
     return await attempt(searchVariant);
   } catch (e) {
-    if (searchVariant !== "modern" || !isUnsupportedToolTypeError(e, "modern")) throw e;
-    searchVariant = "basic";
-    searchVariantNote = `This environment rejected the ${SEARCH_TOOL_VARIANTS.modern.search} tool type, so the older ${SEARCH_TOOL_VARIANTS.basic.search} variant is in use for the rest of this session. Search still works — results just are not dynamically filtered before they reach the model.`;
+    if (searchVariant !== "modern" || !isPossibleToolTypeRejection(e)) throw e;
     try {
-      return await attempt("basic");
+      const out = await attempt("basic");
+      // Earned, not assumed. The basic pair succeeded on a request the modern
+      // pair could not complete, which is the only evidence available that the
+      // tool type was what the environment objected to.
+      searchVariant = "basic";
+      searchVariantNote = `This environment rejected the ${SEARCH_TOOL_VARIANTS.modern.search} tool type (HTTP 400); the older ${SEARCH_TOOL_VARIANTS.basic.search} variant works and is in use for the rest of this session. Search still works — results just are not dynamically filtered before they reach the model.`;
+      return out;
     } catch (basicError) {
-      // Both errors, deliberately. Reporting only the second would hide why the
-      // downgrade happened, and the fallback failing is not evidence that the
-      // basic tools were the problem.
-      throw new Error(`${SEARCH_TOOL_VARIANTS.modern.search} was rejected (${e.message}); the ${SEARCH_TOOL_VARIANTS.basic.search} fallback then failed too (${basicError.message}).`);
+      // Both pairs failed, so the tool type was not the problem and nothing was
+      // learned. Leave no trace: a session permanently downgraded by an
+      // unrelated billing or malformed-request error would quietly lose dynamic
+      // filtering for the rest of its life.
+      throw new Error(`The request failed on both search tool versions, so the tool type is not the cause. ${SEARCH_TOOL_VARIANTS.modern.search}: ${e.message} — ${SEARCH_TOOL_VARIANTS.basic.search}: ${basicError.message}`);
     }
   }
 }

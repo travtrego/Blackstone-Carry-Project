@@ -224,12 +224,19 @@ environment the app runs in; pinning the basic type gives up dynamic filtering
 everywhere to satisfy a restriction that may not apply. And nothing local can
 settle it, because the sandbox is what authenticates the call.
 
-So it is settled at runtime instead. The code asks for the modern pair, and if a
-400 comes back naming the tool type, it downgrades once, remembers that for the
-rest of the session, and renders a note saying which variant is in use. The
-detection leans permissive: a false positive costs one extra call, a false
-negative leaves the feature dead. If both generations fail, both errors are
-reported — the fallback failing is not evidence the basic tools were the problem.
+So it is settled at runtime instead. The code asks for the modern pair, and on
+any 400 it retries once with the basic pair.
+
+Matching on the error *message* was the obvious approach and is the wrong one:
+that text comes from a proxy whose output nobody here has ever seen, so any
+pattern is a guess, and guessing too narrowly is the expensive direction — the
+fallback never fires and Branch 1 stays broken in exactly the way that prompted
+it. What makes the broad trigger safe is that the downgrade is not believed until
+it is *earned*: it sticks only if the basic pair succeeds where the modern pair
+failed, which is the only available evidence that the tool type was the
+difference. A 400 from anything else — malformed request, billing — fails on both
+pairs, the variant is put back, and the error says the tool type is not the
+cause. So an unrelated failure cannot leave a session quietly downgraded.
 
 The lesson is the one this project keeps relearning. The instinct on a bug report
 naming a specific one-line fix is to apply the one-line fix; the report was
