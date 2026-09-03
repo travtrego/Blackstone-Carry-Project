@@ -30,8 +30,12 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const SOURCE = join(HERE, "..", "carry-review.jsx");
 
 const START_MARKER = "const FUNDS = [";
-const END_MARKER = "function downloadCSV()";
-const EXPORTS = "FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER";
+// Matches the opening paren, not "()", so the marker survives downloadCSV
+// gaining parameters. It gained them when Branch 2 learned to export a
+// refreshed table, and an end marker that breaks on a signature change is a
+// marker that will keep breaking.
+const END_MARKER = "function downloadCSV(";
+const EXPORTS = "FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER, normalizeRefreshedFunds, asOfToDecimal, asOfLabel, BASELINE_AS_OF, BASELINE_PROVENANCE, REPORT_DATE_DEC";
 
 async function loadMath() {
   const src = await readFile(SOURCE, "utf8");
@@ -69,7 +73,10 @@ function parseCsvLine(line) {
 const pct = (c) => +(c.effectivePct * 100).toFixed(1);
 
 // ---------- run ----------
-const { FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER } = await loadMath();
+const {
+  FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER,
+  normalizeRefreshedFunds, asOfToDecimal, BASELINE_AS_OF, BASELINE_PROVENANCE, REPORT_DATE_DEC,
+} = await loadMath();
 const fund = (name) => {
   const f = FUNDS.find((x) => x.name === name);
   if (!f) throw new Error(`No fund named ${name} — the reference data changed.`);
@@ -185,6 +192,129 @@ section("Structural invariants (not in the original answer key)");
 {
   const orphan = FUNDS.filter((f) => f.clearsHurdle && !isComputable(f));
   check("no clearsHurdle on an uncomputable fund", orphan.length === 0, orphan.length ? orphan.map((f) => f.name).join(", ") : "none");
+}
+
+section("Refreshed fund data (Branch 2 refresh)");
+
+// A refresh from a later quarter has to move the report date with it. If it
+// doesn't, every carry figure comes out slightly too high and nothing says so.
+{
+  const f = fund("BCP VII");
+  const base = computeCarry(f, asOfToDecimal(BASELINE_AS_OF));
+  const later = computeCarry(f, asOfToDecimal({ year: 2027, month: 6 }));
+  check(
+    "report date is honoured — a later as-of accrues more hurdle",
+    later.hurdleAmt > base.hurdleAmt && later.years > base.years,
+    `${base.years.toFixed(1)}y $${base.hurdleAmt.toFixed(2)}B -> ${later.years.toFixed(1)}y $${later.hurdleAmt.toFixed(2)}B`
+  );
+}
+
+// The decimal constant and the {year, month} form are two spellings of the same
+// date. If they drift, the baseline silently computes against a date that isn't
+// the one the UI prints.
+{
+  check("BASELINE_AS_OF agrees with REPORT_DATE_DEC", asOfToDecimal(BASELINE_AS_OF) === REPORT_DATE_DEC,
+    `${asOfToDecimal(BASELINE_AS_OF)} vs ${REPORT_DATE_DEC}`);
+}
+
+const goodRow = { name: "BCP VII", period: "2016-2020", start: 2016, end: 2020, committed: 18.9, available: 1.3, moic: 2.1, irr: "12%", status: "Harvesting" };
+const payload = (over) => ({ asOf: { year: 2026, month: 9 }, sourceUrl: "https://www.blackstone.com/x.pdf", sourceLabel: "2Q26 supplemental", sourcePath: "direct", complete: true, notes: "", funds: [goodRow], ...over });
+
+// The waterfall does not throw on a negative paid-in — it just returns numbers
+// that look ordinary and are meaningless. This has to be caught at the door.
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [{ ...goodRow, committed: 1.0, available: 5.0 }] }));
+  check("rejects available > committed (negative paid-in)", !r.ok && r.rejected.length === 1,
+    r.rejected[0]?.errors?.join("; ") || "not rejected");
+}
+
+// Numbers arriving as strings mean the extraction was improvising. Coercing
+// them is how "2.4x" and "~2.4" get in later.
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [{ ...goodRow, moic: "2.1" }] }));
+  check("rejects a stringified number rather than coercing it", !r.ok && r.rejected.length === 1,
+    r.rejected[0]?.errors?.join("; ") || "not rejected");
+}
+
+// The one field the project deliberately keeps in human hands. A model must not
+// be able to set it, even by naming it outright.
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [{ ...goodRow, name: "Brand New Fund", irr: "40%", clearsHurdle: true }] }));
+  check("never accepts a model-supplied clearsHurdle", r.ok && r.funds[0].clearsHurdle === undefined,
+    `clearsHurdle=${String(r.funds[0]?.clearsHurdle)}`);
+}
+
+// Carried across only when the human judgment still describes the number it was
+// made about: same fund, same disclosed IRR.
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [goodRow] }));
+  check("carries clearsHurdle across when name and IRR both match", r.ok && r.funds[0].clearsHurdle === true,
+    `clearsHurdle=${String(r.funds[0]?.clearsHurdle)}`);
+}
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [{ ...goodRow, irr: "9%" }] }));
+  check("drops clearsHurdle when the disclosed IRR moved", r.ok && r.funds[0].clearsHurdle === undefined,
+    `irr 12% -> 9%, clearsHurdle=${String(r.funds[0]?.clearsHurdle)}`);
+}
+
+// Fresh numbers compounded to an assumed date are worse than no refresh: the
+// screen looks updated and the hurdle is quietly wrong.
+{
+  const r = normalizeRefreshedFunds(payload({ asOf: null }));
+  check("refuses the whole refresh when the as-of date is missing", !r.ok && r.funds.length === 0,
+    r.problems[0] || "no problem reported");
+}
+{
+  const r = normalizeRefreshedFunds(payload({ asOf: { year: 2026, month: 13 } }));
+  check("refuses an implausible as-of month", !r.ok, r.problems[0] || "accepted");
+}
+
+// A refresh that quietly lost rows looks identical to a clean one unless the
+// dropped names are reported.
+{
+  const r = normalizeRefreshedFunds(payload({ funds: [goodRow] }));
+  check("reports funds the refresh dropped", r.ok && r.removed.length === FUNDS.length - 1,
+    `${r.removed.length} of ${FUNDS.length} baseline funds absent`);
+}
+
+// The export has to carry provenance per row, or an unverified figure that has
+// come loose from its banner is indistinguishable from a checked one.
+{
+  const refreshed = normalizeRefreshedFunds(payload({ funds: [goodRow] }));
+  const prov = { verified: false, asOf: refreshed.asOf, label: "UNVERIFIED — test" };
+  const rows = toCSV(refreshed.funds, prov).split("\n");
+  const idx = CSV_HEADER.indexOf("Provenance");
+  const body = rows.slice(1).map(parseCsvLine);
+  const widths = new Set(rows.map((r) => parseCsvLine(r).length));
+  check("refreshed CSV stays rectangular and stamps every row unverified",
+    idx !== -1 && widths.size === 1 && [...widths][0] === CSV_HEADER.length && body.every((r) => r[idx] === prov.label),
+    `${body.length} rows, widths ${[...widths].join("/")}, header ${CSV_HEADER.length}`);
+}
+
+// The baseline export must keep saying it is the hand-checked one.
+{
+  const idx = CSV_HEADER.indexOf("Provenance");
+  const rows = toCSV().split("\n").slice(1).map(parseCsvLine);
+  check("baseline CSV is stamped as the verified table",
+    rows.every((r) => r[idx] === BASELINE_PROVENANCE.label), BASELINE_PROVENANCE.label);
+}
+
+// Same invariant as the verified table, on data the model produced: the CSV
+// cannot print a number where the UI shows n/m.
+{
+  const irrUnchanged = FUNDS.filter(isComputable).filter((f) => f.clearsHurdle).map((f) => ({
+    name: f.name, period: f.period, start: f.start, end: f.end,
+    committed: f.committed, available: f.available, moic: f.moic, irr: f.irr, status: f.status,
+  }));
+  const r = normalizeRefreshedFunds(payload({ funds: irrUnchanged }));
+  const prov = { verified: false, asOf: r.asOf, label: "UNVERIFIED — test" };
+  const idx = CSV_HEADER.indexOf("Effective carry %");
+  const rows = toCSV(r.funds, prov).split("\n").slice(1).map(parseCsvLine);
+  const reportDate = asOfToDecimal(r.asOf);
+  const flagged = r.funds.filter((f) => getWarnings(f, computeCarry(f, reportDate), r.asOf).length > 0);
+  const bad = flagged.filter((f) => rows.find((row) => row[0] === f.name)?.[idx] !== "n/m");
+  check("flagged refreshed funds still export n/m, not a number", bad.length === 0,
+    bad.length ? bad.map((f) => f.name).join(", ") : `${flagged.length} flagged of ${r.funds.length} refreshed`);
 }
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

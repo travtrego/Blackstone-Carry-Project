@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { Search, FileText, Scissors, ShieldAlert, FileCheck, Gavel, Loader2, Calculator, Download, ChevronDown } from "lucide-react";
+import { Search, FileText, Scissors, ShieldAlert, FileCheck, Gavel, Loader2, Calculator, Download, ChevronDown, RefreshCw } from "lucide-react";
 
 const STAGES = [
   { key: "retrieve", label: "Retrieve source", sub: "web_search · sec.gov, blackstone.com", icon: Search },
@@ -72,6 +72,28 @@ const FUNDS = [
 ];
 
 const REPORT_DATE_DEC = 2026.5; // June 30, 2026
+
+// The date the baseline table above is stated as of, in the same shape the
+// refresh agent reports its own source date. It is kept alongside
+// REPORT_DATE_DEC rather than replacing it so the decimal constant stays
+// greppable; an eval asserts the two agree, so they cannot drift apart.
+const BASELINE_AS_OF = { year: 2026, month: 6 }; // June 30, 2026 — 2Q26
+const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+
+// Quarter-ends land on clean twelfths: March -> x.25, June -> x.5,
+// September -> x.75, December -> the following whole year.
+function asOfToDecimal(a) { return a.year + a.month / 12; }
+function asOfLabel(a) { return `${MONTHS[a.month - 1]} ${a.year}`; }
+
+// Where the numbers on screen came from. Every export and every warning string
+// is stamped with one of these, so a figure can never be read without its
+// provenance attached.
+const BASELINE_PROVENANCE = {
+  verified: true,
+  asOf: BASELINE_AS_OF,
+  label: "hand-checked baseline table, data as of 6/30/2026",
+};
+
 const HURDLE_RATE = 0.08;
 const CATCHUP_MULT = 0.25; // hurdle * (20/80)
 const CARRY_SPLIT = 0.2;
@@ -86,9 +108,14 @@ function isComputable(f) {
   return f.start != null && f.end != null && typeof f.committed === "number" && typeof f.available === "number" && typeof f.moic === "number";
 }
 
-function computeCarry(f) {
+// reportDate is a parameter rather than a read of the module constant because
+// Branch 2 can now load a refreshed table from a later quarter. Compounding the
+// hurdle to June 2026 against September 2026 data would be wrong in a way
+// nothing on screen would reveal — every carry figure would simply come out a
+// little too high, with no error and no flag.
+function computeCarry(f, reportDate = REPORT_DATE_DEC) {
   const paidIn = f.committed - f.available;
-  const years = Math.min(Math.max(REPORT_DATE_DEC - (f.start + f.end) / 2, MIN_YEARS), MAX_FUND_LIFE_YEARS);
+  const years = Math.min(Math.max(reportDate - (f.start + f.end) / 2, MIN_YEARS), MAX_FUND_LIFE_YEARS);
   const totalValue = f.moic * paidIn;
   const profit = totalValue - paidIn;
   const hurdleAmt = paidIn * (Math.pow(1 + HURDLE_RATE, years) - 1);
@@ -112,11 +139,11 @@ function computeCarry(f) {
 // answer, so it gets flagged rather than presented as comparable to a harvested
 // fund's. Same principle as Bug #2 in the README: an honest flag beats a
 // confident wrong number.
-function getWarnings(f, c) {
+function getWarnings(f, c, asOf = BASELINE_AS_OF) {
   const warnings = [];
   if (c.years <= MIN_YEARS) {
     warnings.push(
-      `${f.name} is still early in its deployment window — the midpoint of ${f.period} falls at or after the June 2026 report date, so effectively no hurdle has accrued (${(c.hurdleAmt * 1000).toFixed(0)}M on $${c.paidIn.toFixed(2)}B paid-in). With almost nothing to clear, the GP takes the full 20%. This carry is computed against unrealized marks, not distributions, and is almost certainly overstated.`
+      `${f.name} is still early in its deployment window — the midpoint of ${f.period} falls at or after the ${asOfLabel(asOf)} report date, so effectively no hurdle has accrued (${(c.hurdleAmt * 1000).toFixed(0)}M on $${c.paidIn.toFixed(2)}B paid-in). With almost nothing to clear, the GP takes the full 20%. This carry is computed against unrealized marks, not distributions, and is almost certainly overstated.`
     );
   }
   // The model says a fund earned no carry, but the fund's own disclosed IRR says
@@ -131,6 +158,172 @@ function getWarnings(f, c) {
   return warnings;
 }
 
+// ---------- Refreshed fund data (Branch 2 "Refresh fund data") ----------
+//
+// Everything below treats the refresh agent's output as hostile input rather
+// than as data. It is a model's reading of a PDF, and the failure mode that
+// matters is not a crash — it is one plausible-looking wrong number sitting in
+// a table of right ones, which is the exact thing this project exists to catch.
+//
+// So these rules reject rather than coerce. A row that needs guessing to parse
+// is precisely the row that would put a confident wrong figure on screen, and
+// "2.4" arriving as a string instead of a number is not a formatting quirk to
+// paper over — it is evidence the extraction was improvising.
+//
+// Three rules carry most of the weight:
+//
+//   - clearsHurdle is NEVER read from the model. It is a documented human
+//     judgment (see the note above FUNDS), and handing an extraction agent the
+//     one field this project deliberately keeps in human hands would quietly
+//     undo Bug #2's whole fix. It is carried across from the hand-checked
+//     baseline only when the fund name AND the disclosed IRR string both match
+//     exactly — if the IRR moved, the old judgment no longer describes the new
+//     number and the flag is dropped.
+//
+//   - available > committed is rejected outright. It makes paid-in capital
+//     negative, and a negative paid-in runs through the whole waterfall without
+//     throwing, producing carry percentages that look ordinary and are garbage.
+//
+//   - A missing or implausible as-of date rejects the entire refresh, not just
+//     one row. Fresh numbers compounded to an assumed date are worse than no
+//     refresh at all: everything on screen would look updated and the hurdle
+//     would be silently wrong.
+const MAX_PLAUSIBLE_MOIC = 20;
+const MIN_PLAUSIBLE_YEAR = 1980;
+const MAX_PLAUSIBLE_YEAR = 2100;
+
+function isFiniteNumber(v) { return typeof v === "number" && Number.isFinite(v); }
+// null is a legitimate value throughout the table (a fund with no MOIC yet, an
+// evergreen vehicle with no committed figure), so "absent" and "wrong type" are
+// deliberately different answers.
+function optionalNumber(v) { return v == null || isFiniteNumber(v); }
+function optionalString(v) { return v == null || typeof v === "string"; }
+
+function normalizeAsOf(a) {
+  if (!a || typeof a !== "object") return null;
+  if (!Number.isInteger(a.year) || a.year < MIN_PLAUSIBLE_YEAR || a.year > MAX_PLAUSIBLE_YEAR) return null;
+  if (!Number.isInteger(a.month) || a.month < 1 || a.month > 12) return null;
+  return { year: a.year, month: a.month };
+}
+
+function validateRefreshedFund(raw) {
+  const errors = [];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { errors: ["row is not an object"] };
+
+  const name = typeof raw.name === "string" ? raw.name.trim() : "";
+  if (!name) errors.push("missing or non-string name");
+  for (const k of ["period", "irr", "status"]) {
+    if (!optionalString(raw[k])) errors.push(`${k} is not a string`);
+  }
+  // Numbers must arrive as JSON numbers. Accepting "2.4" here would mean
+  // accepting "2.4x", then "~2.4", then a silent NaN in the waterfall.
+  for (const k of ["committed", "available", "moic"]) {
+    if (!optionalNumber(raw[k])) errors.push(`${k} is not a number (got ${JSON.stringify(raw[k])})`);
+  }
+  for (const k of ["start", "end"]) {
+    const v = raw[k];
+    if (v == null) continue;
+    if (!Number.isInteger(v) || v < MIN_PLAUSIBLE_YEAR || v > MAX_PLAUSIBLE_YEAR) errors.push(`${k} is not a plausible year (got ${JSON.stringify(v)})`);
+  }
+  if (Number.isInteger(raw.start) && Number.isInteger(raw.end) && raw.end < raw.start) {
+    errors.push(`end year ${raw.end} precedes start year ${raw.start}`);
+  }
+  if (isFiniteNumber(raw.committed) && raw.committed < 0) errors.push("negative committed capital");
+  if (isFiniteNumber(raw.available) && raw.available < 0) errors.push("negative available capital");
+  if (isFiniteNumber(raw.committed) && isFiniteNumber(raw.available) && raw.available > raw.committed) {
+    errors.push(`available ($${raw.available}B) exceeds committed ($${raw.committed}B) — paid-in capital would be negative`);
+  }
+  // A 0.0x fund is a total loss, which is unusual but not impossible, and the
+  // waterfall already handles it correctly — negative profit takes the zero-carry
+  // branch. Only negatives are actually impossible, so only negatives are
+  // rejected: dropping a row for being grim rather than wrong loses real data.
+  if (isFiniteNumber(raw.moic) && (raw.moic < 0 || raw.moic > MAX_PLAUSIBLE_MOIC)) {
+    errors.push(`MOIC ${raw.moic}x is outside the plausible 0-${MAX_PLAUSIBLE_MOIC}x range`);
+  }
+  if (errors.length) return { errors };
+
+  // Rebuilt field by field rather than spread from raw, so nothing the model
+  // invented — clearsHurdle above all — can ride along into the calculator.
+  return {
+    errors: [],
+    fund: {
+      name,
+      period: raw.period ?? "n/d",
+      start: raw.start ?? null,
+      end: raw.end ?? null,
+      committed: raw.committed ?? null,
+      available: raw.available ?? null,
+      moic: raw.moic ?? null,
+      irr: raw.irr ?? null,
+      status: raw.status ?? "n/d",
+    },
+  };
+}
+
+function normalizeRefreshedFunds(payload, baseline = FUNDS) {
+  const problems = [];
+  const rejected = [];
+  if (!payload || typeof payload !== "object") {
+    return { ok: false, funds: [], rejected, problems: ["the agent did not return a JSON object"], asOf: null, source: null };
+  }
+
+  const asOf = normalizeAsOf(payload.asOf);
+  if (!asOf) {
+    return {
+      ok: false, funds: [], rejected, asOf: null, source: null,
+      problems: ['the agent did not report a usable "as of" date ({year, month}), so the hurdle could not be compounded to a known date — refusing the whole refresh rather than assuming one'],
+    };
+  }
+  if (asOfToDecimal(asOf) < asOfToDecimal(BASELINE_AS_OF)) {
+    problems.push(`the refreshed data is dated ${asOfLabel(asOf)}, which is OLDER than the ${asOfLabel(BASELINE_AS_OF)} baseline — the agent probably reached a stale document`);
+  }
+
+  const rows = Array.isArray(payload.funds) ? payload.funds : null;
+  if (!rows) {
+    return { ok: false, funds: [], rejected, problems: [...problems, "payload contained no `funds` array"], asOf, source: null };
+  }
+
+  const priorByName = new Map(baseline.map((f) => [f.name, f]));
+  const funds = [];
+  const seen = new Set();
+  rows.forEach((raw, i) => {
+    const { errors, fund } = validateRefreshedFund(raw);
+    if (errors.length) {
+      rejected.push({ name: (raw && typeof raw.name === "string" && raw.name.trim()) || `row ${i + 1}`, errors });
+      return;
+    }
+    if (seen.has(fund.name)) {
+      rejected.push({ name: fund.name, errors: ["duplicate row — a later row repeats a fund already extracted"] });
+      return;
+    }
+    seen.add(fund.name);
+    const prior = priorByName.get(fund.name);
+    if (prior && prior.clearsHurdle && prior.irr != null && fund.irr === prior.irr) fund.clearsHurdle = true;
+    funds.push(fund);
+  });
+
+  const source = {
+    url: typeof payload.sourceUrl === "string" ? payload.sourceUrl : "unreported",
+    label: typeof payload.sourceLabel === "string" ? payload.sourceLabel : "unreported source",
+    path: payload.sourcePath === "direct" || payload.sourcePath === "search" ? payload.sourcePath : "unknown",
+    complete: payload.complete === true,
+    notes: typeof payload.notes === "string" ? payload.notes : "",
+  };
+  if (source.path === "unknown") problems.push('the agent did not say whether it read the pinned PDF directly or fell back to search');
+  if (!source.url.includes("blackstone.com")) problems.push(`the reported source URL is not on blackstone.com: ${source.url}`);
+  if (!source.complete) problems.push("the agent did not confirm it saw the complete fund table — rows may be missing");
+
+  // Names that vanished are as informative as names that appeared: a fund the
+  // extraction simply missed looks identical to one that was wound up, and only
+  // a human comparing against the source can tell those apart.
+  const nowNames = new Set(funds.map((f) => f.name));
+  const added = funds.filter((f) => !priorByName.has(f.name)).map((f) => f.name);
+  const removed = baseline.filter((f) => !nowNames.has(f.name)).map((f) => f.name);
+
+  if (!funds.length) problems.push("no row survived validation");
+  return { ok: funds.length > 0, funds, rejected, problems, asOf, source, added, removed };
+}
+
 // Columns mirror the nine waterfall steps shown in the UI, in the same order, so
 // the export and the on-screen calculation can be reconciled line for line.
 const CSV_HEADER = [
@@ -138,41 +331,52 @@ const CSV_HEADER = [
   "Reported net IRR", "Total value ($B)", "Profit ($B)", "Years elapsed",
   "Hurdle owed ($B)", "GP catch-up ($B)", "GP 80/20 split ($B)",
   "GP carry total ($B)", "LP proceeds ($B)", "Effective carry %", "Status", "Warnings",
+  // Per row, not as a header line: a provenance banner at the top of the file
+  // is lost the moment anyone sorts or filters the sheet, and an unverified
+  // number that has come loose from its disclaimer is indistinguishable from a
+  // hand-checked one.
+  "Provenance",
 ];
 
-function toCSV() {
+function toCSV(funds = FUNDS, prov = BASELINE_PROVENANCE) {
+  const reportDate = asOfToDecimal(prov.asOf);
   const rows = [CSV_HEADER];
-  FUNDS.forEach((f) => {
+  funds.forEach((f) => {
     if (!isComputable(f)) {
       rows.push([
         f.name, f.period, f.committed ?? "n/d", f.available ?? "n/d", "n/a", f.moic ?? "n/a",
         f.irr ?? "n/a", "n/a", "n/a", "n/a",
         "n/a", "n/a", "n/a",
-        "n/a", "n/a", "insufficient data", f.status, "",
+        "n/a", "n/a", "insufficient data", f.status, "", prov.label,
       ]);
       return;
     }
-    const c = computeCarry(f);
-    const w = getWarnings(f, c);
+    const c = computeCarry(f, reportDate);
+    const w = getWarnings(f, c, prov.asOf);
     rows.push([
       f.name, f.period, f.committed.toFixed(1), f.available.toFixed(1), c.paidIn.toFixed(2), f.moic.toFixed(2),
       f.irr ?? "n/d", c.totalValue.toFixed(2), c.profit.toFixed(2), c.years.toFixed(1),
       c.hurdleAmt.toFixed(2), c.catchUp.toFixed(2), c.gpSplit.toFixed(2),
       c.gpTotal.toFixed(2), c.lpTotal.toFixed(2),
       w.length ? "n/m" : (c.effectivePct * 100).toFixed(1) + "%", f.status,
-      w.join(" "),
+      w.join(" "), prov.label,
     ]);
   });
   return rows.map((r) => r.map((v) => `"${String(v).replace(/"/g, '""')}"`).join(",")).join("\n");
 }
 
-function downloadCSV() {
-  const csv = toCSV();
+// The filename carries the provenance too. Two CSVs in a downloads folder that
+// differ only in whether the numbers were ever checked by a human should not
+// share a name.
+function downloadCSV(funds = FUNDS, prov = BASELINE_PROVENANCE) {
+  const csv = toCSV(funds, prov);
   const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "blackstone_pe_carry_for_dummies.csv";
+  a.download = prov.verified
+    ? "blackstone_pe_carry_for_dummies.csv"
+    : `blackstone_pe_carry_UNVERIFIED_${prov.asOf.year}-${String(prov.asOf.month).padStart(2, "0")}.csv`;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -248,7 +452,82 @@ function isRetryable(e) {
   return e.status >= 500;
 }
 
-async function callClaudeOnce({ system, prompt, tools }) {
+// ---------- Web-search tool variants ----------
+//
+// Two generations of the server-side search tools exist. The _20260209 pair adds
+// dynamic filtering — results are filtered before they reach the context window
+// — and is the current variant for Sonnet 5, the model this file calls. The
+// _20250305 / _20250910 pair is the older basic variant, kept for models before
+// Sonnet 4.6.
+//
+// The modern pair is the correct one for this model against the first-party API.
+// But this file never runs against the first-party API: it runs inside Claude's
+// artifact sandbox, which proxies the request and is free to accept a narrower
+// set of tool types than the API documents. Hard-pinning the modern type
+// therefore fails closed in the only environment the app actually runs in, while
+// hard-pinning the basic type gives up dynamic filtering everywhere to satisfy a
+// restriction that may not even apply.
+//
+// Neither guess is checkable from here — the sandbox is what authenticates the
+// call, so nothing local can prove which types it allows. So the version is
+// settled at runtime rather than argued about in a comment: ask for the modern
+// pair, and if the request comes back rejecting the tool type, downgrade once,
+// remember it for the rest of the session, and surface a note saying so. The
+// downgrade is never silent; a search quietly running with different filtering
+// than the code claims is its own bug.
+const SEARCH_TOOL_VARIANTS = {
+  modern: { search: "web_search_20260209", fetch: "web_fetch_20260209" },
+  basic: { search: "web_search_20250305", fetch: "web_fetch_20250910" },
+};
+
+let searchVariant = "modern";
+let searchVariantNote = null;
+
+function getSearchVariantNote() { return searchVariantNote; }
+
+// The spec is variant-independent: { search: {...opts}, fetch: {...opts} }. Only
+// the type string differs between generations — allowed_domains and the rest
+// carry across both unchanged.
+function buildSearchTools(spec, variant) {
+  const v = SEARCH_TOOL_VARIANTS[variant];
+  const tools = [];
+  if (spec.search) tools.push({ type: v.search, name: "web_search", ...spec.search });
+  if (spec.fetch) tools.push({ type: v.fetch, name: "web_fetch", ...spec.fetch });
+  return tools;
+}
+
+// A rejected tool type is a 400 naming the type string. The looser second test
+// catches a proxy that rejects by shape without echoing the type back. It leans
+// permissive on purpose: a false positive costs one extra call with the basic
+// pair, while a false negative leaves the feature dead in the water.
+function isUnsupportedToolTypeError(e, variant) {
+  if (!e || e.status !== 400) return false;
+  const v = SEARCH_TOOL_VARIANTS[variant];
+  const msg = String(e.message || "");
+  if (msg.includes(v.search) || msg.includes(v.fetch)) return true;
+  return /tool/i.test(msg) && /(unsupported|not supported|unknown|unrecognized|invalid)/i.test(msg) && /type/i.test(msg);
+}
+
+async function callClaudeWithSearch({ system, prompt, toolSpec, maxTokens, timeoutMs, thinking }) {
+  const attempt = (variant) => callClaude({ system, prompt, tools: buildSearchTools(toolSpec, variant), maxTokens, timeoutMs, thinking });
+  try {
+    return await attempt(searchVariant);
+  } catch (e) {
+    if (searchVariant !== "modern" || !isUnsupportedToolTypeError(e, "modern")) throw e;
+    searchVariant = "basic";
+    searchVariantNote = `This environment rejected the ${SEARCH_TOOL_VARIANTS.modern.search} tool type, so the older ${SEARCH_TOOL_VARIANTS.basic.search} variant is in use for the rest of this session. Search still works — results just are not dynamically filtered before they reach the model.`;
+    try {
+      return await attempt("basic");
+    } catch (basicError) {
+      // Both errors, deliberately. Reporting only the second would hide why the
+      // downgrade happened, and the fallback failing is not evidence that the
+      // basic tools were the problem.
+      throw new Error(`${SEARCH_TOOL_VARIANTS.modern.search} was rejected (${e.message}); the ${SEARCH_TOOL_VARIANTS.basic.search} fallback then failed too (${basicError.message}).`);
+    }
+  }
+}
+
+async function callClaudeOnce({ system, prompt, tools, maxTokens = 4000, timeoutMs, thinking = { type: "disabled" } }) {
   // `thinking` is set explicitly rather than omitted. On Sonnet 4.6 an absent
   // `thinking` meant no thinking at all; on Sonnet 5 it means adaptive thinking
   // runs. Leaving it out would have silently changed how all six stages behave
@@ -260,10 +539,15 @@ async function callClaudeOnce({ system, prompt, tools }) {
   // previous 1500 because stage 1 is asked to return raw filing language, and
   // 1500 tokens is roughly 1100 words — tight enough that truncation was
   // plausible, and until the check below nothing would have revealed it.
+  // max_tokens, thinking and the timeout are parameters rather than constants
+  // because the refresh agent in Branch 2 has a genuinely different shape from
+  // the six pipeline stages: it extracts a ~35-row table out of a PDF, which
+  // does not fit in 4000 tokens and does not finish in 90 seconds. The defaults
+  // are the pipeline's existing values, so Branch 1 behaviour is untouched.
   const body = {
     model: "claude-sonnet-5",
-    max_tokens: 4000,
-    thinking: { type: "disabled" },
+    max_tokens: maxTokens,
+    thinking,
     system,
     messages: [{ role: "user", content: prompt }],
   };
@@ -273,7 +557,7 @@ async function callClaudeOnce({ system, prompt, tools }) {
     {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
     },
-    tools ? 90000 : 45000,
+    timeoutMs ?? (tools ? 90000 : 45000),
     "API call"
   );
   const data = await res.json().catch(() => null);
@@ -529,14 +813,18 @@ function ReviewPipeline() {
     let currentStage = "retrieve";
     try {
       setStageStatus("retrieve", "running");
-      const retrieverText = await callClaude({
+      const retrieverText = await callClaudeWithSearch({
         system: "You are a retrieval agent. Your ONLY job is to find Blackstone's actual disclosed carried interest / performance revenue terms — hurdle rate, catch-up mechanics, GP/LP split, crystallization or realization triggers. Restrict yourself to sec.gov and blackstone.com results only — ignore and do not cite any other domain. PREFER THE MOST RECENT FILING AVAILABLE — actively search for current-year filings, not just whatever surfaces first. Always state the filing's date/fiscal year explicitly (e.g. 'From Blackstone's FY2024 10-K') so staleness is visible to the reader — never present disclosure language without dating it. Before citing any source, VERIFY the document type in your label matches the document type in the actual URL/filing you're citing (e.g. don't label something '10-K' if the underlying document is actually a 10-Q) — a mismatched label is worse than no label. If the most recent filing's language differs from older filings, prefer and quote the recent version. If you cannot find primary-source text at those two domains, say so plainly and return nothing else. Do not explain or interpret — return the relevant raw disclosure text, then 'SOURCE:' followed by the URL.",
         prompt: "Find Blackstone's disclosed carried interest / performance revenue terms (hurdle, catch-up, GP/LP split, crystallization).",
-        // The _20260209 variant adds dynamic filtering: Claude filters search
-        // results before they reach the context window, which helps both the
-        // accuracy and the token cost of this stage. Requires Sonnet 5, so it
-        // is gated on the model change above.
-        tools: [{ type: "web_search_20260209", name: "web_search" }],
+        // Deliberately no allowed_domains here, even though the system prompt
+        // spends three sentences on domain restriction and the tool could
+        // enforce it outright. The README documents three pipeline runs against
+        // this stage's current configuration; adding an enforced constraint
+        // would change what the retriever sees and make run 4 unattributable
+        // against them. Same reasoning that kept the prompts fixed when the
+        // model was upgraded. The refresh agent in Branch 2 has no baseline to
+        // protect, so it does enforce its domains.
+        toolSpec: { search: {} },
       });
       setStageResult("retrieve", retrieverText); setStageStatus("retrieve", "done"); setActiveKey("mechanics");
 
@@ -643,30 +931,188 @@ function WarningBanner({ warnings }) {
   );
 }
 
+// Unverified data gets a banner that cannot be dismissed, because the whole
+// point is that it stays attached to the numbers. It reports what the extraction
+// dropped as well as what it kept: a refresh that silently lost eight rows looks
+// identical to a clean one from the headline figures alone.
+function ProvenanceBanner({ prov, report, onRevert }) {
+  if (prov.verified) return null;
+  const rejected = report?.rejected ?? [];
+  const problems = report?.problems ?? [];
+  return (
+    <div className="mb-6 rounded-md px-4 py-3" style={{ background: "#A3423A1F", border: `1px solid ${COLOR.red}` }}>
+      <div className="flex items-start justify-between gap-3 flex-wrap">
+        <div className="text-[10px] uppercase tracking-widest" style={{ fontFamily: "IBM Plex Mono, monospace", color: COLOR.red }}>
+          Unverified data — LLM-extracted, not hand-checked
+        </div>
+        <button onClick={onRevert} className="text-[10px] uppercase tracking-widest px-2 py-1 rounded"
+          style={{ fontFamily: "IBM Plex Mono, monospace", color: COLOR.vellum, background: "#00000033", border: `1px solid ${COLOR.brassDim}` }}>
+          Revert to verified
+        </button>
+      </div>
+      <p className="text-xs leading-relaxed mt-2" style={{ color: COLOR.vellumDim }}>
+        These figures were read out of a PDF by a language model and no human has checked them against the source. Every number below, and every number in the CSV export, should be treated as a lead to verify rather than as a result. {prov.label}
+      </p>
+      {report && (
+        <p className="text-xs leading-relaxed mt-2" style={{ color: COLOR.vellumDim, fontFamily: "IBM Plex Mono, monospace" }}>
+          {report.funds.length} rows accepted · {rejected.length} rejected · data as of {asOfLabel(report.asOf)}
+          {report.added?.length ? ` · new: ${report.added.join(", ")}` : ""}
+          {report.removed?.length ? ` · no longer present: ${report.removed.join(", ")}` : ""}
+        </p>
+      )}
+      {problems.length > 0 && (
+        <ul className="text-xs mt-2 list-disc pl-4 space-y-0.5" style={{ color: "#D98878" }}>
+          {problems.map((w, i) => <li key={i}>{w}</li>)}
+        </ul>
+      )}
+      {rejected.length > 0 && (
+        <ul className="text-xs mt-2 list-disc pl-4 space-y-0.5" style={{ color: "#D98878" }}>
+          {rejected.map((r, i) => <li key={i}>{r.name}: {r.errors.join("; ")}</li>)}
+        </ul>
+      )}
+      {/* The hand-set hurdle flag cannot survive a refresh unless the fund's
+          disclosed IRR is unchanged, so Bug #2's cross-check goes quiet for
+          anything that moved. Saying so is the difference between a guard that
+          is off and a guard that is off without anyone noticing. */}
+      <p className="text-xs leading-relaxed mt-2" style={{ color: COLOR.vellumDim }}>
+        The hand-set “clears the hurdle” judgment was carried over only for funds whose name and disclosed IRR both still match the verified table. For any other fund the understated-carry cross-check is inactive, so a computed 0.0% here is not evidence the GP earned nothing.
+      </p>
+    </div>
+  );
+}
+
+// ---------- Branch 2: refresh agent ----------
+//
+// Pinned, not searched for. The quarterly supplemental is the primary source for
+// this table, and a search-first agent will cheerfully settle for a summary
+// article about the same quarter and extract numbers that have already been
+// rounded by someone else. Search stays available strictly as a fallback for
+// when this URL is gone.
+const REFRESH_SOURCE_URL = "https://www.blackstone.com/wp-content/uploads/sites/2/2026/07/Blackstone2Q26SupplementalFinancialData.pdf";
+
+const REFRESH_SYSTEM = `You are a data extraction agent. You extract a private equity fund performance table from Blackstone's published quarterly supplemental financial data and return it as JSON. You do not analyse, interpret, or comment on it.
+
+PROCEDURE — follow in order:
+1. Call web_fetch on exactly this URL: ${REFRESH_SOURCE_URL}
+   This is the required starting point. Do not search first.
+2. ONLY if that fetch fails or the document does not contain the fund table, use web_search restricted to blackstone.com to locate Blackstone's most recent quarterly supplemental financial data PDF, and fetch that instead.
+3. Report which path you took in "sourcePath": "direct" if step 1 worked, "search" if you needed step 2.
+
+EXTRACTION RULES:
+- Extract every row of the private equity / fund performance table, including funds with no MOIC or IRR yet.
+- Copy figures exactly as printed. Do not convert, re-round, annualise, or infer. Committed and available capital are in $ billions, as plain JSON numbers — never strings, never with a "$" or "B".
+- If the table does not give a value, use null. Never estimate one, and never carry a number over from a different fund or a different period.
+- "irr" is a STRING copied verbatim, including any qualifier the source prints: "19%", "24% (early)", "not meaningful". Do not strip the qualifier and do not convert it to a number — the qualifier is the most important part of the value.
+- "start" and "end" are the investment period's start and end years as integers, or null where the source gives no single period (e.g. "Various", evergreen vehicles).
+- "asOf" is the date the data is stated as of — the quarter-end the document reports, NOT today's date and NOT the publication date.
+- Set "complete" to true only if you saw the entire fund table end to end. If the document was truncated or you are unsure you reached the last row, set it to false and say so in "notes".
+- Do NOT output a clearsHurdle field, or any field not listed below. It will be discarded.
+
+Respond ONLY with JSON, no preamble and no markdown fences:
+{"asOf": {"year": number, "month": number}, "sourceUrl": string, "sourceLabel": string, "sourcePath": "direct" | "search", "complete": boolean, "notes": string, "funds": [{"name": string, "period": string, "start": number|null, "end": number|null, "committed": number|null, "available": number|null, "moic": number|null, "irr": string|null, "status": string}]}`;
+
+const REFRESH_PROMPT = `Fetch ${REFRESH_SOURCE_URL} and extract the full private equity fund performance table as JSON, following your procedure and extraction rules exactly.`;
+
 function CarryCalculator() {
-  const computable = FUNDS.filter(isComputable);
-  const uncomputable = FUNDS.filter((f) => !isComputable(f));
-  const [selected, setSelected] = useState(computable[2]?.name || computable[0]?.name);
+  // null means the hand-checked baseline. A refresh never mutates FUNDS — it
+  // parks a second table alongside it — so reverting is always one click away
+  // and the verified data stays the thing that lives in source control.
+  const [dataset, setDataset] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshError, setRefreshError] = useState(null);
+  // Only ever the last *failed* attempt. A successful one is carried on the
+  // dataset itself, so the two can never be confused for each other.
+  const [failedReport, setFailedReport] = useState(null);
+  const [searchNote, setSearchNote] = useState(null);
+  const [selected, setSelected] = useState(() => {
+    const first = FUNDS.filter(isComputable);
+    return first[2]?.name || first[0]?.name;
+  });
   const [narrative, setNarrative] = useState("");
   const [narrLoading, setNarrLoading] = useState(false);
   const [narrError, setNarrError] = useState(null);
 
-  const fund = FUNDS.find((f) => f.name === selected);
-  const c = fund && isComputable(fund) ? computeCarry(fund) : null;
-  const warnings = fund && c ? getWarnings(fund, c) : [];
+  const funds = dataset ? dataset.funds : FUNDS;
+  const prov = dataset ? dataset.prov : BASELINE_PROVENANCE;
+  const reportDate = asOfToDecimal(prov.asOf);
+  const computable = funds.filter(isComputable);
+  const uncomputable = funds.filter((f) => !isComputable(f));
+
+  // Falls back to the first computable fund instead of going undefined: a
+  // refreshed table need not still contain whatever was selected before it.
+  const fund = funds.find((f) => f.name === selected) || computable[0] || null;
+  const c = fund && isComputable(fund) ? computeCarry(fund, reportDate) : null;
+  const warnings = fund && c ? getWarnings(fund, c, prov.asOf) : [];
+
+  async function runRefresh() {
+    setRefreshing(true); setRefreshError(null); setFailedReport(null);
+    try {
+      const raw = await callClaudeWithSearch({
+        system: REFRESH_SYSTEM,
+        prompt: REFRESH_PROMPT,
+        // Domains are enforced by the tool here, not just asked for in the
+        // prompt, so an off-domain result cannot reach the model even if the
+        // instructions are ignored. The prompt language stays anyway — a tool
+        // constraint cannot stop a model reciting figures from memory.
+        toolSpec: {
+          fetch: { allowed_domains: ["blackstone.com"], max_content_tokens: 120000 },
+          search: { allowed_domains: ["blackstone.com"], max_uses: 5 },
+        },
+        // A ~35-row table does not fit in the pipeline's 4000-token ceiling, and
+        // a PDF fetch plus extraction does not finish inside 90 seconds.
+        maxTokens: 16000,
+        timeoutMs: 180000,
+        // On for this call only. Reading a financial table out of a PDF is
+        // exactly the kind of work adaptive thinking helps with, and unlike the
+        // six pipeline stages there is no documented baseline here to hold still
+        // for comparison.
+        thinking: { type: "adaptive" },
+      });
+      const result = normalizeRefreshedFunds(extractJSON(raw), FUNDS);
+      if (!result.ok) {
+        setFailedReport(result);
+        setRefreshError(dataset
+          ? "The refresh returned data that did not survive validation. The table already on screen is unchanged — it is still the previous refresh, not the verified baseline."
+          : "The refresh returned data that did not survive validation, so the verified table is still in use. Details below.");
+        return;
+      }
+      setDataset({
+        funds: result.funds,
+        // The report travels with the dataset it describes. Reading the banner
+        // off the latest attempt instead would hand it a failed report — asOf
+        // null — while the previous, still-loaded table is on screen.
+        report: result,
+        prov: {
+          verified: false,
+          asOf: result.asOf,
+          label: `UNVERIFIED — extracted by an LLM from ${result.source.label} (${result.source.url}) via ${result.source.path === "direct" ? "the pinned PDF" : "search fallback"}, ${new Date().toISOString().slice(0, 10)}, not hand-checked`,
+        },
+      });
+      setNarrative("");
+    } catch (e) {
+      setRefreshError(String(e));
+    } finally {
+      setRefreshing(false);
+      setSearchNote(getSearchVariantNote());
+    }
+  }
+
+  function revertToVerified() {
+    setDataset(null); setFailedReport(null); setRefreshError(null); setNarrative("");
+  }
 
   async function explainForDummy() {
     if (!fund || !c) return;
     setNarrLoading(true); setNarrError(null); setNarrative("");
     try {
       const text = await callClaude({
-        system: "You explain private equity carried interest math to someone with zero finance background. You are given EXACT pre-computed numbers — do not recompute or alter them, just narrate what they mean in plain, friendly language, step by step, using an analogy if it helps. Keep it under 200 words. If a MODEL LIMITATION is listed, say so plainly in your explanation — do not present the carry figure as a reliable estimate when one is present.",
-        prompt: `Fund: ${fund.name} (${fund.period}, ${fund.status})
+        system: "You explain private equity carried interest math to someone with zero finance background. You are given EXACT pre-computed numbers — do not recompute or alter them, just narrate what they mean in plain, friendly language, step by step, using an analogy if it helps. Keep it under 200 words. If a MODEL LIMITATION is listed, say so plainly in your explanation — do not present the carry figure as a reliable estimate when one is present. If the input says the data is UNVERIFIED, open by saying so in one plain sentence before explaining anything — the reader needs to know the inputs were machine-read from a PDF and never checked by a person.",
+        prompt: `${prov.verified ? "" : `DATA PROVENANCE: UNVERIFIED — ${prov.label}\n\n`}Fund: ${fund.name} (${fund.period}, ${fund.status})
 Committed capital: $${fund.committed}B, Available (undrawn): $${fund.available}B
 Paid-in capital: $${c.paidIn.toFixed(2)}B
 Reported MOIC: ${fund.moic}x → Total value: $${c.totalValue.toFixed(2)}B
 Profit: $${c.profit.toFixed(2)}B
-Years since deployment (approx.): ${c.years.toFixed(1)}
+Years since deployment (approx., to the ${asOfLabel(prov.asOf)} report date): ${c.years.toFixed(1)}
 Compounded 8% hurdle owed to LPs: $${c.hurdleAmt.toFixed(2)}B
 GP catch-up (100% until GP holds 20% of profit above return of capital): $${c.catchUp.toFixed(2)}B
 GP's 20% share above catch-up: $${c.gpSplit.toFixed(2)}B
@@ -694,11 +1140,50 @@ Explain this like I'm a dummy.`,
             Deterministic waterfall math per fund — 8% hurdle, 100% catch-up, 20% carry, European whole-fund. Years-to-hurdle runs from deployment midpoint, capped at 12 years (typical full fund life) so mature/realized funds aren't penalized for a hurdle compounding all the way to today. Standard assumptions, not Blackstone's actual disclosed terms.
           </p>
         </div>
-        <button onClick={downloadCSV} className="flex items-center gap-2 px-5 py-3 rounded-md text-sm shrink-0"
-          style={{ background: COLOR.gold, color: COLOR.void, fontFamily: "IBM Plex Mono, monospace", letterSpacing: "0.05em" }}>
-          <Download size={14} /> DOWNLOAD CSV — ALL FUNDS
-        </button>
+        <div className="flex flex-col gap-2 shrink-0">
+          <button onClick={() => downloadCSV(funds, prov)} className="flex items-center gap-2 px-5 py-3 rounded-md text-sm"
+            style={{ background: COLOR.gold, color: COLOR.void, fontFamily: "IBM Plex Mono, monospace", letterSpacing: "0.05em" }}>
+            <Download size={14} /> DOWNLOAD CSV — ALL FUNDS
+          </button>
+          <button onClick={runRefresh} disabled={refreshing}
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-md text-sm"
+            style={{ background: "transparent", color: COLOR.brass, border: `1px solid ${COLOR.brassDim}`, opacity: refreshing ? 0.55 : 1, cursor: refreshing ? "default" : "pointer", fontFamily: "IBM Plex Mono, monospace", letterSpacing: "0.05em" }}>
+            {refreshing ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+            {refreshing ? "REFRESHING…" : "REFRESH FUND DATA"}
+          </button>
+          {dataset && (
+            <button onClick={revertToVerified} className="text-[10px] uppercase tracking-widest px-2 py-1.5 rounded"
+              style={{ fontFamily: "IBM Plex Mono, monospace", color: COLOR.vellumDim, background: "transparent", border: `1px solid ${COLOR.panelEdge}` }}>
+              Revert to verified table
+            </button>
+          )}
+        </div>
       </div>
+
+      <ProvenanceBanner prov={prov} report={dataset?.report} onRevert={revertToVerified} />
+
+      {refreshError && (
+        <div className="mb-6 px-4 py-3 rounded-md text-sm" style={{ background: "#2A1815", color: "#D98878", border: `1px solid ${COLOR.red}` }}>
+          <div className="mb-1">{refreshError}</div>
+          {/* A failed refresh changes nothing. Saying so explicitly matters:
+              the alternative reading is that the numbers on screen are
+              half-updated. Which table survived depends on whether one had
+              already been loaded, so the message above distinguishes them. */}
+          <div className="text-xs" style={{ color: COLOR.vellumDim }}>Nothing on screen changed.</div>
+          {failedReport?.problems?.length > 0 && (
+            <ul className="text-xs mt-2 list-disc pl-4 space-y-0.5">{failedReport.problems.map((w, i) => <li key={i}>{w}</li>)}</ul>
+          )}
+          {failedReport?.rejected?.length > 0 && (
+            <ul className="text-xs mt-2 list-disc pl-4 space-y-0.5">{failedReport.rejected.map((r, i) => <li key={i}>{r.name}: {r.errors.join("; ")}</li>)}</ul>
+          )}
+        </div>
+      )}
+
+      {searchNote && (
+        <div className="mb-6 px-4 py-3 rounded-md text-xs" style={{ background: COLOR.panel, color: COLOR.vellumDim, border: `1px solid ${COLOR.panelEdge}`, fontFamily: "IBM Plex Mono, monospace" }}>
+          {searchNote}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-[260px_1fr] gap-6">
         <div>
@@ -737,9 +1222,17 @@ Explain this like I'm a dummy.`,
             </p>
           ) : (
             <>
-              <h2 className="text-2xl mb-1" style={{ fontFamily: "Fraunces, serif", fontWeight: 500 }}>{fund.name}</h2>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <h2 className="text-2xl" style={{ fontFamily: "Fraunces, serif", fontWeight: 500 }}>{fund.name}</h2>
+                {!prov.verified && (
+                  <span className="text-[9px] uppercase tracking-widest px-2 py-1 rounded"
+                    style={{ fontFamily: "IBM Plex Mono, monospace", color: COLOR.red, border: `1px solid ${COLOR.red}` }}>
+                    Unverified
+                  </span>
+                )}
+              </div>
               <p className="text-xs mb-5" style={{ fontFamily: "IBM Plex Mono, monospace", color: COLOR.brass }}>
-                8% hurdle · 100% catch-up · 20% carry — standard assumptions, not Blackstone's actual terms
+                8% hurdle · 100% catch-up · 20% carry — standard assumptions, not Blackstone's actual terms · data as of {asOfLabel(prov.asOf)}
               </p>
 
               <WarningBanner warnings={warnings} />
@@ -748,7 +1241,7 @@ Explain this like I'm a dummy.`,
                 <StepRow n={1} label="Paid-in capital" formula={`$${fund.committed}B committed − $${fund.available}B available`} value={`$${c.paidIn.toFixed(2)}B`} />
                 <StepRow n={2} label="Total value" formula={`${fund.moic}x MOIC × $${c.paidIn.toFixed(2)}B paid-in`} value={`$${c.totalValue.toFixed(2)}B`} />
                 <StepRow n={3} label="Profit" formula={`$${c.totalValue.toFixed(2)}B total value − $${c.paidIn.toFixed(2)}B paid-in`} value={`$${c.profit.toFixed(2)}B`} />
-                <StepRow n={4} label="Years since deployment (approx.)" formula={`June 2026 − midpoint of ${fund.period}`} value={`${c.years.toFixed(1)} yrs`} />
+                <StepRow n={4} label="Years since deployment (approx.)" formula={`${asOfLabel(prov.asOf)} − midpoint of ${fund.period}`} value={`${c.years.toFixed(1)} yrs`} />
                 <StepRow n={5} label="Compounded hurdle owed to LPs" formula={`$${c.paidIn.toFixed(2)}B × (1.08^${c.years.toFixed(1)} − 1)`} value={`$${c.hurdleAmt.toFixed(2)}B`} />
                 <StepRow n={6} label="GP catch-up" formula={`min(profit − hurdle, hurdle × 0.25)`} value={`$${c.catchUp.toFixed(2)}B`} />
                 <StepRow n={7} label="80/20 split above catch-up (GP side)" formula={`(profit − hurdle − catch-up) × 20%`} value={`$${c.gpSplit.toFixed(2)}B`} />

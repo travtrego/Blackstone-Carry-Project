@@ -54,6 +54,10 @@ deliberately restricted context, so the pipeline can be tested for
 
 The Retriever is the only stage that calls a live tool (`web_search`) and
 gets a longer timeout (90s vs. 45s) and retry-with-backoff for that reason.
+It asks for the current `web_search_20260209` tool variant and falls back to
+the older `web_search_20250305` once per session if the environment rejects
+the type — see "the reported bug that wasn't" below for why that is settled at
+runtime rather than pinned.
 
 ### Branch 2 — Carry-for-Dummies Calculator
 
@@ -66,6 +70,47 @@ instructed not to recompute anything.
 This split exists on purpose: LLM arithmetic can be subtly wrong in ways
 that are invisible from the output alone, while a bug in real code is
 traceable and fixable. See "Bug #1" below for what that distinction caught.
+
+#### Refresh Fund Data
+
+The reference table is transcribed by hand from Blackstone's quarterly
+supplemental. "Refresh Fund Data" re-fetches it with a single-agent extraction
+call, pinned to start at the 2Q26 supplemental PDF and permitted to fall back
+to a blackstone.com search only if that URL is gone. Domains are enforced on
+the tool itself, not just requested in the prompt.
+
+The result is **never** presented as equivalent to the hand-checked table. It
+loads as a separate dataset alongside `FUNDS` — which is never mutated, so
+reverting is one click — and carries an undismissable banner, a per-fund
+`UNVERIFIED` chip, a distinct CSV filename, and a provenance column stamped on
+every exported row. Per row rather than as a header line, because a header is
+lost the moment anyone sorts the sheet.
+
+Three decisions in the validation layer are worth stating, because all three
+chose strictness over a working demo:
+
+- **`clearsHurdle` is never read from the model.** It is the hand-set judgment
+  that Bug #2's cross-check depends on, and letting an extraction agent write
+  it would quietly undo that fix. It is carried across from the verified table
+  only when the fund name *and* the disclosed IRR string both still match. Where
+  the IRR moved, the flag is dropped and the banner says the cross-check is
+  inactive for that fund — an inactive guard nobody knows about is worse than
+  no guard.
+- **Rows are rejected, not coerced.** A MOIC arriving as `"2.1"` instead of
+  `2.1` is not a formatting quirk to paper over; it is evidence the extraction
+  was improvising, and coercing it is how `"2.4x"` and `"~2.4"` get in later.
+  Rejected rows are listed by name with reasons rather than silently dropped.
+  Funds that vanished between the two tables are listed too — an extraction
+  that missed eight rows looks exactly like a clean one from the headline
+  figures alone.
+- **A missing as-of date rejects the whole refresh.** The hurdle compounds to a
+  report date, so fresh numbers dated to an assumed quarter would render a
+  screen that looks updated and is quietly wrong in every row. `computeCarry`
+  now takes the report date as a parameter for the same reason.
+
+The extraction is one agent, not six. Branch 1's chain-of-custody design exists
+to test information loss across handoffs; there are no handoffs here, and
+adding stages would only add places for a number to change.
 
 ---
 
@@ -156,6 +201,42 @@ still collapses. What changed is that the tool no longer *presents* that zero
 as an answer. The case is satisfied by disclosure, not by a better estimate,
 and that distinction is the whole point of the fix.
 
+### The reported bug that wasn't — the `web_search` tool identifier
+
+Reported as: `web_search_20260209` is an invalid tool identifier and should be
+`web_search_20250305`, which is why Branch 1 fails.
+
+It isn't invalid. `web_search_20260209` is the current variant — it adds dynamic
+filtering, where results are filtered before they reach the context window — and
+it is the correct one for `claude-sonnet-5`, the model this file calls.
+`web_search_20250305` is the older basic variant, kept for models before Sonnet
+4.6. The change to `_20260209` was deliberate and gated on the Sonnet 5 upgrade.
+
+But the report was not baseless, and the commit that made the change says why:
+*"Not verifiable here: the pipeline needs the artifact sandbox to authenticate."*
+That upgrade was never run live. The sandbox proxies these calls and is free to
+accept a narrower set of tool types than the API documents, so a real failure
+there is entirely possible — it just wouldn't mean the identifier was invalid.
+
+Both candidate fixes were wrong in the same way: they answer an empirical
+question by guessing. Pinning the modern type fails closed in the only
+environment the app runs in; pinning the basic type gives up dynamic filtering
+everywhere to satisfy a restriction that may not apply. And nothing local can
+settle it, because the sandbox is what authenticates the call.
+
+So it is settled at runtime instead. The code asks for the modern pair, and if a
+400 comes back naming the tool type, it downgrades once, remembers that for the
+rest of the session, and renders a note saying which variant is in use. The
+detection leans permissive: a false positive costs one extra call, a false
+negative leaves the feature dead. If both generations fail, both errors are
+reported — the fallback failing is not evidence the basic tools were the problem.
+
+The lesson is the one this project keeps relearning. The instinct on a bug report
+naming a specific one-line fix is to apply the one-line fix; the report was
+precise, confident, and wrong about the cause while being plausibly right about
+the symptom. Checking the claim cost one lookup. Applying it would have silently
+downgraded a working stage and left the real failure — whatever it is — intact.
+
 ### Pipeline-level findings (Branch 1, across 3 full runs)
 
 - Run 1: Retriever mislabeled a 10-Q as a 10-K (source content was real,
@@ -175,6 +256,9 @@ and that distinction is the whole point of the fix.
 - `evals/eval_set.md` — the carry-calculator answer key, written *before*
   the calculator was implemented, with the results appended afterward
 - `evals/run-evals.mjs` — the answer key as an executable check
+- `evals/run-api-evals.mjs` — behavioural checks for the API layer against a
+  stubbed fetch: request shaping, retry and truncation policy, and the search
+  tool version fallback
 - `evals/branch1_eval_criteria.md` — pass/fail behavioral criteria for
   each of the 6 pipeline agents, written before re-testing any of them
 - `LICENSE` — MIT
@@ -183,16 +267,30 @@ and that distinction is the whole point of the fix.
 
 ```
 node evals/run-evals.mjs
+node evals/run-api-evals.mjs
 ```
 
 No dependencies, no build step, no `package.json` — the project doesn't have a
 toolchain and this doesn't add one. Exits non-zero on failure, so it works as a
 pre-commit hook or a CI step.
 
-It covers the seven cases from `eval_set.md` plus four structural invariants
-that came out of later work: the CSV can't go ragged, a flagged fund can't
+The first covers the seven cases from `eval_set.md`, four structural invariants
+that came out of later work — the CSV can't go ragged, a flagged fund can't
 export a number where the UI shows `n/m`, and the hand-set `clearsHurdle` flag
-can't drift onto a fund whose IRR doesn't support it.
+can't drift onto a fund whose IRR doesn't support it — and thirteen more for the
+refresh path: the report date has to move the maths, a model-supplied
+`clearsHurdle` has to be ignored, a negative paid-in has to be rejected at the
+door, and refreshed rows have to obey every invariant the verified ones do.
+
+The second stubs `fetch` and checks the API layer, which the first cannot reach.
+Most of it exists for one branch: the tool version fallback only fires when the
+environment rejects a type, and the only environment that authenticates these
+calls is the artifact sandbox. A downgrade that silently doesn't happen leaves
+Branch 1 dead; one that fires when it shouldn't quietly gives up dynamic
+filtering. Neither is visible from the output. It also pins the things
+deliberately *not* changed — the 4000-token ceiling, disabled thinking, the
+retry policy — so a later edit to the shared request builder can't alter Branch
+1 while aiming at Branch 2.
 
 The runner slices the pure-maths region out of `carry-review.jsx` at runtime
 rather than importing it. That's deliberate: the artifact has to stay a single
