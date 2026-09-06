@@ -5,46 +5,20 @@
 //   node evals/run-evals.mjs
 //
 // Exits non-zero if anything fails, so it works as a pre-commit or CI check.
-// No dependencies and no build step, deliberately — the project has no
-// package.json and adding one would imply a toolchain that doesn't exist.
+// This check still has no runtime dependencies, so the finance answer key can
+// run even when the web-app dependencies have not been installed yet.
 //
-// WHY IT EXTRACTS RATHER THAN IMPORTS
-// carry-review.jsx has to stay a single self-contained file, because that is
-// what gets pasted into the artifact sandbox to run. It can't be imported
-// directly here: it opens with a React import and contains JSX, neither of
-// which node will parse. The three alternatives were to duplicate the maths
-// into this file (two copies of the truth, guaranteed to drift), to split the
-// maths into its own module (breaks the single-file constraint), or to slice
-// the pure-maths region out of the source at runtime. This does the third. The
-// region between the two markers below is plain JavaScript with no React, no
-// JSX and no DOM access, so it evaluates as a module unmodified.
-//
-// If someone reorders the file so a marker moves, this fails immediately with a
-// clear message rather than silently testing the wrong thing.
-
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
-
-const HERE = dirname(fileURLToPath(import.meta.url));
-const SOURCE = join(HERE, "..", "carry-review.jsx");
-
-const START_MARKER = "const FUNDS = [";
-const END_MARKER = "function downloadCSV()";
-const EXPORTS = "FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER";
-
-async function loadMath() {
-  const src = await readFile(SOURCE, "utf8");
-  const start = src.indexOf(START_MARKER);
-  const end = src.indexOf(END_MARKER);
-
-  if (start === -1) throw new Error(`Could not find "${START_MARKER}" in ${SOURCE}. Did the file get reorganised?`);
-  if (end === -1) throw new Error(`Could not find "${END_MARKER}" in ${SOURCE}. Did the file get reorganised?`);
-  if (end < start) throw new Error(`"${END_MARKER}" appears before "${START_MARKER}" in ${SOURCE}. The extracted region would be empty or inverted.`);
-
-  const code = src.slice(start, end) + `\nexport { ${EXPORTS} };\n`;
-  return import("data:text/javascript," + encodeURIComponent(code));
-}
+// The calculator is a pure JavaScript module. The browser interface and this
+// answer key import the same functions, so there is one source of truth and no
+// source-code slicing or duplicated formulas.
+import {
+  FUNDS,
+  CSV_HEADER,
+  computeCarry,
+  getWarnings,
+  isComputable,
+  toCSV,
+} from "../lib/carry.js";
 
 // ---------- tiny assertion harness ----------
 let passed = 0;
@@ -69,7 +43,6 @@ function parseCsvLine(line) {
 const pct = (c) => +(c.effectivePct * 100).toFixed(1);
 
 // ---------- run ----------
-const { FUNDS, isComputable, computeCarry, getWarnings, toCSV, CSV_HEADER } = await loadMath();
 const fund = (name) => {
   const f = FUNDS.find((x) => x.name === name);
   if (!f) throw new Error(`No fund named ${name} — the reference data changed.`);
@@ -77,7 +50,7 @@ const fund = (name) => {
 };
 
 console.log("Blackstone carry calculator — eval set");
-console.log(`source: carry-review.jsx (${START_MARKER} … ${END_MARKER})`);
+console.log("source: lib/carry.js");
 
 section("Answer key (evals/eval_set.md)");
 

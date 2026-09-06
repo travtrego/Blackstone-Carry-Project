@@ -1,2 +1,18 @@
+# dependencies
+/node_modules
+
+# build output
+/.next/
+/.vinext/
+/dist/
+/.wrangler/
+next-env.d.ts
+
+# local environment and credentials
+.env*
+!.env.example
+
+# misc
 .DS_Store
-node_modules/
+*.pem
+npm-debug.log*

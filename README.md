@@ -11,6 +11,68 @@ any of it for real analysis.
 
 ---
 
+## Run it locally
+
+The project is now a normal web application rather than a Claude-only
+artifact.
+
+**Already set up on this computer?** Double-click `START TOOL.cmd` in this
+folder, keep its window open, and open <http://localhost:3000>. Your saved
+`.env.local` settings load automatically. If the tool is already running, just
+open that address. Closing the server window stops the tool; closing a browser
+tab does not delete your code or settings, but unsaved results are lost.
+
+For a fresh setup (Node.js 22.13 or newer):
+
+1. Install the app dependencies:
+
+   ```powershell
+   npm install
+   ```
+
+2. Copy `.env.example` to `.env.local` and add an Anthropic API key:
+
+   ```text
+   ANTHROPIC_API_KEY=your-key-here
+   ANTHROPIC_WORKSPACE_ID=your-workspace-id-here
+   ```
+
+   `ANTHROPIC_WORKSPACE_ID` is required for identity-linked personal keys. Copy
+   it from **Claude Platform > Settings > Workspaces**. Legacy workspace keys
+   can leave it blank.
+
+   Never commit `.env.local`. The browser never receives this key; AI requests
+   go through `app/api/claude/route.ts`, which adds the credential on the
+   server.
+
+3. Start the app:
+
+   ```powershell
+   npm run dev
+   ```
+
+4. Open <http://localhost:3000>. Branch 1 runs the six-stage AI review; Branch 2
+   calculates immediately and only calls Claude when you click Explain.
+
+The deterministic calculator and CSV export work without an API key. The
+six-stage review pipeline and plain-language AI explanation require the key.
+
+Run all automated checks with `npm test`, or tests plus a production build with
+`npm run check`. Run `npm run lint` separately. To serve the built app locally,
+use `npm run build` followed by `npm start`. Both launchers load `.env.local`.
+
+### Current verified status — September 4, 2026
+
+The full six-stage pipeline completed in the browser in approximately 1 minute
+40 seconds, and the complete report exported successfully. Calculator AI,
+CSV export, cancellation, and branch switching were also exercised. The local
+production build serves the app and completes a Claude API smoke test.
+
+See `docs/AUDIT-2026-09-04.md` for the evidence, fixes, and unresolved limits.
+These are observed runs, not a guarantee of future model latency or accuracy.
+
+---
+
 ## Why this exists
 
 Most multi-agent demos show a pipeline that works once, on camera. The
@@ -52,8 +114,20 @@ deliberately restricted context, so the pipeline can be tested for
    (not against any intermediate agent output) on completeness, accuracy,
    and skeptic value-add, each 0-10 with cited justification.
 
-The Retriever is the only stage that calls a live tool (`web_search`) and
-gets a longer timeout (90s vs. 45s) and retry-with-backoff for that reason.
+The Retriever is the only stage that calls a live tool (`web_search`). It uses
+basic search with at most two tool uses, limited to SEC/Blackstone domains.
+The server deadline is 90 seconds for search and 60 seconds per analysis stage;
+browser deadlines are five seconds longer and include response-body reading.
+There are no automatic paid retries. A failure stops downstream work; Retry
+Failed Stage keeps completed results in the current page. Cancel aborts the
+request, subject to upstream cancellation behavior. The UI shows elapsed time
+and completed-stage timings.
+
+Retrieval requires actual primary-domain citation metadata, not merely a URL
+written in prose. Search errors, incomplete output, and malformed judge scores
+are rejected. Excerpts remain AI-assembled: this is not a guarantee that the
+newest filing or every relevant disclosure was found. Save All exports the
+completed stages; save before refreshing or closing the tab.
 
 ### Branch 2 — Carry-for-Dummies Calculator
 
@@ -71,33 +145,39 @@ traceable and fixable. See "Bug #1" below for what that distinction caught.
 
 ## What this is / isn't
 
-**Is:** a working demonstration of building and testing a multi-agent
-system, using real public data (Blackstone SEC filings + a Blackstone fund
-performance reference table).
+**Is:** a working local demonstration using live primary-source search and a
+dated fund-performance table inherited from the original artifact. The table's
+original source document is not retained here and its figures have not been
+independently verified.
 
-**Isn't:** a standalone deployable app. The `carry-review.jsx` file makes
-`fetch()` calls to `https://api.anthropic.com/v1/messages` with **no API
-key anywhere in the code** — that only works inside Claude's artifact
-sandbox, which proxies and authenticates the request invisibly. Clone this
-and run it as a normal web app and every button will silently fail.
+**Is:** a standalone local web application. The original artifact's direct
+browser-to-Anthropic request has been replaced with a server route. That route
+holds the API key outside the browser and returns clear configuration errors
+instead of letting the buttons silently fail.
 
-To actually deploy this, you would need, at minimum:
-- A real backend holding the API key server-side (never expose it to the
-  browser — anyone could read it from dev tools)
-- Real hosting for that backend + frontend
-- If used on real client/engagement data: firm AI-governance and InfoSec
-  sign-off before it touches anything non-public
+**Isn't:** ready for unrestricted public production use. The current server
+binds to loopback and the AI route rejects non-local hosts and cross-origin
+requests. These are local-use safeguards, not authentication. Public hosting
+requires authentication, per-user spending controls, durable rate limiting,
+and appropriate governance before processing confidential information.
 
 **Isn't:** validated against Blackstone's actual current LPA terms. The
-calculator's 8% hurdle / 100% catch-up / 20% carry are stated, labeled
-assumptions — the pipeline's own Retriever found real disclosed ranges
-(5-10% hurdle depending on filing year and vehicle type) that don't match
-that flat assumption. This is intentional: Branch 2 is a teaching tool for
-how carry math works, not a real economics estimate for any specific fund.
+calculator's 8% hurdle / 100% catch-up / 20% carry are teaching assumptions.
+Committed minus available capital is a paid-in proxy, MOIC-derived total value
+is not verified distributable cash, and the midpoint/12-year timing model is
+not actual cash-flow timing. A hurdle is not a guaranteed return; net IRR alone
+does not establish actual contractual carry. Assumptions and provenance warnings
+are included on every exported CSV row.
 
 ---
 
 ## Bugs found through testing (not through a single successful run)
+
+The history below records the original artifact's reasoning and observations,
+not independent validation of the input table or actual fund economics. In the
+September 2026 audit, warning language was corrected: high reported net IRR is
+only a potential model inconsistency, not proof that an actual hurdle was met;
+the 12-year cap is a teaching approximation, not verified realization timing.
 
 ### Bug #1 — Hurdle compounding to "today" instead of to realization
 
@@ -156,7 +236,7 @@ still collapses. What changed is that the tool no longer *presents* that zero
 as an answer. The case is satisfied by disclosure, not by a better estimate,
 and that distinction is the whole point of the fix.
 
-### Pipeline-level findings (Branch 1, across 3 full runs)
+### Original artifact's reported pipeline findings (3 earlier runs)
 
 - Run 1: Retriever mislabeled a 10-Q as a 10-K (source content was real,
   citation type was wrong). Did not recur in runs 2 or 3.
@@ -171,7 +251,20 @@ and that distinction is the whole point of the fix.
 
 ## Files
 
-- `carry-review.jsx` — the full artifact (both branches, tabbed UI)
+- `app/page.tsx` — application entry point
+- `app/api/claude/route.ts` — server-only Anthropic API boundary
+- `components/carry-review.jsx` — small tabbed application shell
+- `components/review-pipeline.jsx` — six-stage disclosure-review workflow
+- `components/carry-calculator.jsx` — calculator interface and CSV download
+- `lib/carry.js` — dated fund data and deterministic waterfall calculations
+- `lib/claude-client.js` — browser-to-server AI request handling
+- `lib/review-flow.js` — stage prompts, restricted handoffs, resume, judge validation
+- `app/api/health/route.ts` — local configuration-readiness check (no key values)
+- `START TOOL.cmd` — double-click Windows development launcher
+- `docs/AUDIT-2026-09-04.md` — current runtime/security/data-quality audit
+- `evals/runtime.test.mjs` — transport, source validation, workflow, and proxy tests
+- `lib/theme.js` — shared visual tokens
+- `legacy/carry-review.artifact.jsx` — preserved pre-conversion Claude artifact
 - `evals/eval_set.md` — the carry-calculator answer key, written *before*
   the calculator was implemented, with the results appended afterward
 - `evals/run-evals.mjs` — the answer key as an executable check
@@ -182,26 +275,22 @@ and that distinction is the whole point of the fix.
 ### Running the evals
 
 ```
-node evals/run-evals.mjs
+npm test
 ```
 
-No dependencies, no build step, no `package.json` — the project doesn't have a
-toolchain and this doesn't add one. Exits non-zero on failure, so it works as a
-pre-commit hook or a CI step.
+The finance answer key also runs directly with `node evals/run-evals.mjs`
+without installed dependencies. `npm test` additionally runs the Node test
+suite for cancellation, timeouts, source citations, resume, output schemas,
+API validation and value-conservation checks. Tests fail with a non-zero exit.
 
 It covers the seven cases from `eval_set.md` plus four structural invariants
 that came out of later work: the CSV can't go ragged, a flagged fund can't
 export a number where the UI shows `n/m`, and the hand-set `clearsHurdle` flag
 can't drift onto a fund whose IRR doesn't support it.
 
-The runner slices the pure-maths region out of `carry-review.jsx` at runtime
-rather than importing it. That's deliberate: the artifact has to stay a single
-self-contained file to run in the sandbox, so it can't be imported by node (it
-opens with a React import and contains JSX). Copying the maths into the test
-instead would create a second copy of the truth that drifts the first time
-someone edits one and not the other. If the file is reorganised so the slice
-markers move, the runner fails immediately with a message saying so, rather than
-silently testing nothing.
+The runner imports `lib/carry.js`, which is also imported by the calculator
+interface. That gives the app and its answer key one source of truth without
+copying formulas or extracting source-code slices at runtime.
 
 ---
 
